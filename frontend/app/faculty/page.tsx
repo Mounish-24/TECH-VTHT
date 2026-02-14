@@ -7,7 +7,7 @@ import Navbar from '@/components/Navbar';
 import Footer from '@/components/Footer';
 import { 
     BookOpen, ChevronRight, Megaphone, Beaker, Bell, 
-    Camera, FileText, UserCheck
+    Camera, FileText, UserCheck, Activity
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
@@ -233,14 +233,35 @@ export default function FacultyDashboard() {
                         </div>
 
                         {/* Quick Links Section */}
+                       {/* Quick Links Section */}
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 pb-12">
-                            <div onClick={() => router.push("/faculty/Progress")} className="bg-white p-6 rounded-2xl shadow-sm border-l-4 border-blue-400 cursor-pointer hover:shadow-md transition-all flex justify-between items-center group">
-                                <div><h2 className="text-lg font-bold text-blue-900">Update Progress</h2><p className="text-xs text-gray-400 italic">Record metrics.</p></div>
-                                <ChevronRight size={20} className="text-blue-300 group-hover:translate-x-1 transition-transform" />
+                            {/* Professional Smart Tracker Link */}
+                            <div 
+                                onClick={() => router.push("/faculty/Progress")} 
+                                className="bg-white p-6 rounded-2xl shadow-sm border-l-4 border-blue-600 cursor-pointer hover:shadow-xl hover:-translate-y-1 transition-all flex justify-between items-center group overflow-hidden relative"
+                            >
+                                <div className="relative z-10">
+                                    <h2 className="text-lg font-black text-blue-900 uppercase tracking-tighter">Course Smart Tracker</h2>
+                                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">Real-time syllabus & upload monitoring</p>
+                                </div>
+                                <div className="bg-blue-50 p-3 rounded-xl group-hover:bg-blue-600 group-hover:text-white transition-colors relative z-10">
+                                    <Activity size={24} />
+                                </div>
+                                <Activity size={80} className="absolute -right-4 -bottom-4 text-slate-50 opacity-50 group-hover:text-blue-50 transition-colors" />
                             </div>
-                            <div onClick={() => router.push("/faculty/reports")} className="bg-white p-6 rounded-2xl shadow-sm border-l-4 border-blue-400 cursor-pointer hover:shadow-md transition-all flex justify-between items-center group">
-                                <div><h2 className="text-lg font-bold text-blue-900">Report History</h2><p className="text-xs text-gray-400 italic">Manage PDFs.</p></div>
-                                <FileText size={20} className="text-blue-300" />
+
+                            {/* Report History Card */}
+                            <div 
+                                onClick={() => router.push("/faculty/reports")} 
+                                className="bg-white p-6 rounded-2xl shadow-sm border-l-4 border-orange-500 cursor-pointer hover:shadow-xl hover:-translate-y-1 transition-all flex justify-between items-center group"
+                            >
+                                <div>
+                                    <h2 className="text-lg font-black text-slate-800 uppercase tracking-tighter">Generated Reports</h2>
+                                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">Access past completion PDFs</p>
+                                </div>
+                                <div className="bg-orange-50 p-3 rounded-xl group-hover:bg-orange-500 group-hover:text-white transition-colors">
+                                    <FileText size={24} />
+                                </div>
                             </div>
                         </div>
                     </div>

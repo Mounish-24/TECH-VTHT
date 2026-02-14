@@ -9,7 +9,7 @@ import {
     Users, GraduationCap, UserCog, ArrowLeft, 
     Search, Trash2, BookOpen, PlusCircle, Bell, Trophy, 
     Link as LinkIcon, Edit2, X, ChevronDown, Building2, Briefcase, UserCheck,
-    FileText, Filter, Send, AlertTriangle
+    FileText, Filter, Send, AlertTriangle, Activity
 } from 'lucide-react';
 
 // Searchable Dropdown Component
@@ -594,7 +594,7 @@ export default function AdminDashboard() {
                                         </div>
                                         <div className="space-y-1">
                                             <label className="text-[10px] font-black uppercase text-gray-400">Semester</label>
-                                            <select value={userData.semester} onChange={(e) => setUserData({...userData, semester: Number(e.target.value)})} className="w-full p-2.5 border rounded-lg bg-white">
+                                            <select value={userData.semester} onChange={(e) => setUserData({...userData, semester: Number(e.target.value)})} className="p-2.5 border rounded-lg bg-white">
                                                 {[1,2,3,4,5,6,7,8].map(s => <option key={s} value={s}>{s} Sem</option>)}
                                             </select>
                                         </div>
@@ -708,8 +708,7 @@ export default function AdminDashboard() {
                                                     <th className="p-4">ID/Roll No</th>
                                                     <th className="p-4">Name</th>
                                                     <th className="p-4">{listSubView === 'students' ? 'Section' : 'Designation'}</th>
-                                                    {listSubView === 'faculties' && <th className="p-4">Progress</th>}
-                                                    <th className="p-4">{listSubView === 'students' ? 'Semester' : 'Joining Date'}</th>
+                                                    <th className="p-4">{listSubView === 'faculties' ? 'Smart Progress' : 'Semester'}</th>
                                                     {listSubView === 'students' && <th className="p-4">CGPA</th>}
                                                     <th className="p-4 text-center">Actions</th>
                                                 </tr>
@@ -726,14 +725,18 @@ export default function AdminDashboard() {
                                                                 {user.section || user.designation}
                                                             </span>
                                                         </td>
-                                                        {listSubView === 'faculties' && (
-                                                            <td className="p-4">
-                                                                <button onClick={() => router.push(`/faculty/Progress?adminView=true&facultyId=${user.staff_no}`)} className="flex items-center gap-1.5 bg-white text-blue-900 px-3 py-1.5 rounded-lg font-black text-[10px] uppercase border-2 border-blue-50 hover:bg-blue-900 hover:text-white transition-all shadow-sm group">
-                                                                    <FileText size={14} className="text-blue-600 group-hover:text-white" /> View Progress
+                                                        <td className="p-4">
+                                                            {listSubView === 'faculties' ? (
+                                                                <button 
+                                                                    onClick={() => router.push(`/faculty/Progress?adminView=true&facultyId=${user.staff_no}`)}
+                                                                    className="flex items-center gap-2 bg-white text-blue-900 px-3 py-1.5 rounded-lg font-black text-[10px] uppercase border-2 border-blue-50 hover:bg-blue-900 hover:text-white transition-all shadow-sm group"
+                                                                >
+                                                                    <Activity size={14} className="text-blue-600 group-hover:text-white" /> View Tracker
                                                                 </button>
-                                                            </td>
-                                                        )}
-                                                        <td className="p-4 text-gray-500">{user.semester || user.doj}</td>
+                                                            ) : (
+                                                                <span className="text-gray-500 font-bold">{user.semester} Sem</span>
+                                                            )}
+                                                        </td>
                                                         {listSubView === 'students' && <td className="p-4 font-black text-blue-900">{user.cgpa?.toFixed(2) || '0.00'}</td>}
                                                         <td className="p-4 flex justify-center gap-2">
                                                             <button onClick={() => handleEditClick(user, listSubView === 'students' ? 'Student' : 'Faculty')} className="p-1 text-blue-600 hover:bg-blue-100 rounded transition-colors"><Edit2 size={14} /></button>
@@ -792,7 +795,7 @@ export default function AdminDashboard() {
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 animate-in fade-in duration-300">
                             <div>
                                 <h2 className="text-xl font-bold mb-1 text-gray-800">New {activeTab === 'courses' ? 'Theory Subject' : 'Laboratory'}</h2>
-                                <p className="text-[10px] text-red-600 font-bold mb-6 uppercase tracking-wider italic">* Select the correct year and semester for the syllabus.</p>
+                                <p className="text-[10px] text-red-600 font-bold mb-6 uppercase tracking-wider italic">* Note: Syllabus progress is auto-tracked per section.</p>
                                 <form onSubmit={(e) => handleAddSubject(e, activeTab === 'courses' ? courseData : labData, activeTab === 'labs')} className="space-y-4">
                                     <input type="text" placeholder="Subject Code" value={activeTab === 'courses' ? courseData.code : labData.code} onChange={(e) => activeTab === 'courses' ? setCourseData({...courseData, code: e.target.value}) : setLabData({...labData, code: e.target.value})} className="w-full p-2.5 border rounded-lg" required />
                                     <input type="text" placeholder="Full Title" value={activeTab === 'courses' ? courseData.title : labData.title} onChange={(e) => activeTab === 'courses' ? setCourseData({...courseData, title: e.target.value}) : setLabData({...labData, title: e.target.value})} className="w-full p-2.5 border rounded-lg" required />
@@ -831,7 +834,6 @@ export default function AdminDashboard() {
                             </h2>
 
                             {!arrearPreview ? (
-                                // STAGE 1: Configuration & Upload
                                 <form onSubmit={handleAnalyzeArrears} className="space-y-6 bg-gray-50 p-8 rounded-2xl border">
                                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                                         <div>
@@ -873,7 +875,6 @@ export default function AdminDashboard() {
                                     </button>
                                 </form>
                             ) : (
-                                // STAGE 2: Cleaned Data Preview
                                 <div className="space-y-6">
                                     <div className="flex justify-between items-center">
                                         <button onClick={() => setArrearPreview(null)} className="text-gray-500 flex items-center gap-2 font-bold hover:text-blue-600">

@@ -1,333 +1,230 @@
 'use client';
-import { useEffect, useState, useRef, Suspense } from 'react';
-import { useSearchParams } from 'next/navigation'; // Added for admin view
+import { useEffect, useState, Suspense } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
 import axios from 'axios';
 import { API_URL } from '@/config';
-import { supabase } from '@/lib/supabase';
-import { toBlob } from 'html-to-image';
-import jsPDF from 'jspdf';
-import { Trash2, ShieldAlert } from 'lucide-react';
+import Navbar from '@/components/Navbar';
+import Footer from '@/components/Footer';
+import { 
+    CheckCircle2, Circle, BookOpen, ClipboardList, 
+    Youtube, RefreshCw, ArrowLeft, LayoutDashboard, 
+    Award, Zap, FileText, BarChart3
+} from 'lucide-react';
 
-type UnitProgress = { status: string; start: string; end: string; };
-type SectionData = {
-    unit_progress: Record<string, UnitProgress>;
-    coverage_checklist: Record<string, boolean[]>;
-};
-
-type SubjectBlock = {
-    id: string;
-    semester: string;
-    academicYear: string;
-    courseCode: string;
-    courseTitle: string;
-    activeSections: string[];
-    sectionData: Record<string, SectionData>;
-};
-
-// Sub-component to handle SearchParams safely in Next.js
 function ProgressContent() {
     const searchParams = useSearchParams();
+    const router = useRouter();
+    
+    // Support both Faculty viewing their own and Admin monitoring them
+    const facultyId = searchParams.get('facultyId') || localStorage.getItem('user_id');
     const isAdminView = searchParams.get('adminView') === 'true';
-    const targetFacultyId = searchParams.get('facultyId');
 
-    const [faculty, setFaculty] = useState<any>(null);
+    const [courses, setCourses] = useState<any[]>([]);
+    const [selectedCourse, setSelectedCourse] = useState<any>(null);
+    const [progressData, setProgressData] = useState<any>(null);
     const [loading, setLoading] = useState(true);
-    const [isEditing, setIsEditing] = useState(true);
-    const [subjects, setSubjects] = useState<SubjectBlock[]>([]);
-    const [hodRemarks, setHodRemarks] = useState('');
-    const reportRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
-        const init = async () => {
+        const fetchInitialData = async () => {
             try {
-                // Determine which ID to use: Admin target or Logged-in Faculty
-                const userId = isAdminView ? targetFacultyId : localStorage.getItem('user_id');
-                
-                if (!userId) {
-                    setLoading(false);
-                    return;
-                }
-
-                // 1. Fetch Faculty Profile
-                const res = await axios.get(`${API_URL}/faculty/${userId}`);
-                const facultyData = res.data;
-                setFaculty(facultyData);
-
-                // 2. Fetch specific saved data
-                const { data: savedData, error: fetchError } = await supabase
-                    .from('faculty_progress')
-                    .select('*')
-                    .eq('staff_no', facultyData.staff_no);
-
-                if (savedData && savedData.length > 0) {
-                    const groupedSubjects: Record<string, SubjectBlock> = {};
-                    savedData.forEach((record: any) => {
-                        const key = record.course_code;
-                        if (!groupedSubjects[key]) {
-                            groupedSubjects[key] = {
-                                id: Math.random().toString(),
-                                semester: record.semester || '',
-                                academicYear: record.academic_year || '',
-                                courseCode: record.course_code || '',
-                                courseTitle: record.course_title || '',
-                                activeSections: [],
-                                sectionData: {}
-                            };
-                        }
-                        if (!groupedSubjects[key].activeSections.includes(record.section)) {
-                            groupedSubjects[key].activeSections.push(record.section);
-                        }
-                        groupedSubjects[key].sectionData[record.section] = {
-                            unit_progress: record.unit_progress,
-                            coverage_checklist: record.coverage_checklist
-                        };
-                        if (record.hod_remarks) setHodRemarks(record.hod_remarks);
-                    });
-
-                    setSubjects(Object.values(groupedSubjects));
-                    setIsEditing(false); // Lock view by default
-                } else {
-                    // Default empty state if no data exists
-                    setSubjects([{
-                        id: Math.random().toString(),
-                        semester: '', academicYear: '', courseCode: '', courseTitle: '',
-                        activeSections: [], sectionData: {}
-                    }]);
-                    setIsEditing(!isAdminView); // Only allow editing if NOT admin
+                const res = await axios.get(`${API_URL}/faculty/my-courses?staff_no=${facultyId}`);
+                setCourses(res.data);
+                if (res.data.length > 0) {
+                    setSelectedCourse(res.data[0]);
                 }
             } catch (err) {
-                console.error("Init failed:", err);
+                console.error("Load error", err);
             } finally {
                 setLoading(false);
             }
         };
-        init();
-    }, [isAdminView, targetFacultyId]);
+        fetchInitialData();
+    }, [facultyId]);
 
-    const handleSaveDataOnly = async () => {
-        if (isAdminView) return; // Safety check
-        // ... (Keep your existing handleSaveDataOnly logic here)
+    useEffect(() => {
+        if (selectedCourse) {
+            fetchProgress(selectedCourse.code, selectedCourse.section);
+        }
+    }, [selectedCourse]);
+
+    const fetchProgress = async (code: string, sec: string) => {
         try {
-            for (const sub of subjects) {
-              for (const sec of sub.activeSections) {
-                const payload = {
-                  staff_no: faculty.staff_no,
-                  faculty_name: faculty.name,
-                  course_code: sub.courseCode,
-                  course_title: sub.courseTitle,
-                  semester: sub.semester,
-                  academic_year: sub.academicYear,
-                  section: sec,
-                  unit_progress: sub.sectionData[sec].unit_progress,
-                  coverage_checklist: sub.sectionData[sec].coverage_checklist,
-                  hod_remarks: hodRemarks
-                };
-                await supabase.from('faculty_progress').upsert(payload, { onConflict: 'staff_no,course_code,section' });
-              }
-            }
-            setIsEditing(false);
-            alert('Your details have been saved and locked.');
-          } catch (err) {
-            console.error(err);
-            alert('Error saving data');
-          }
+            const res = await axios.get(`${API_URL}/faculty/course-progress/${code}/${sec}`);
+            setProgressData(res.data);
+        } catch (err) {
+            console.error("Progress fetch error", err);
+        }
     };
 
-    // ... (Keep existing addNewSubject, handleSectionSelect, removeSection, generateAndUploadFullPDF)
-    const addNewSubject = () => { if (!isEditing || isAdminView) return; setSubjects([...subjects, { id: Math.random().toString(), semester: '', academicYear: '', courseCode: '', courseTitle: '', activeSections: [], sectionData: {} }]); };
-    const handleSectionSelect = (subjectIndex: number, section: string) => {
-        if (!isEditing || isAdminView) return;
-        const updatedSubjects = [...subjects];
-        const targetSub = updatedSubjects[subjectIndex];
-        if (targetSub.activeSections.includes(section)) return;
-        targetSub.activeSections.push(section);
-        targetSub.sectionData[section] = {
-            unit_progress: { 'Unit-1': { status: '', start: '', end: '' }, 'Unit-2': { status: '', start: '', end: '' }, 'Unit-3': { status: '', start: '', end: '' }, 'Unit-4': { status: '', start: '', end: '' }, 'Unit-5': { status: '', start: '', end: '' } },
-            coverage_checklist: { 'Notes': [false, false, false, false, false], 'Question Bank': [false, false, false, false, false], 'Assignment': [false, false, false, false, false], 'Videos': [false, false, false, false, false], 'YouTube Link': [false, false, false, false, false] }
-        };
-        setSubjects(updatedSubjects);
-    };
-    const removeSection = async (subjectIndex: number, sectionToRemove: string) => {
-        if (!isEditing || isAdminView) return;
-        if (!confirm(`Delete Section ${sectionToRemove}?`)) return;
-        try {
-            await supabase.from('faculty_progress').delete().eq('staff_no', faculty.staff_no).eq('course_code', subjects[subjectIndex].courseCode).eq('section', sectionToRemove);
-            const updatedSubjects = [...subjects];
-            updatedSubjects[subjectIndex].activeSections = updatedSubjects[subjectIndex].activeSections.filter(s => s !== sectionToRemove);
-            delete updatedSubjects[subjectIndex].sectionData[sectionToRemove];
-            setSubjects(updatedSubjects);
-        } catch (err) { alert("Failed to delete"); }
-    };
+    if (loading) return (
+        <div className="min-h-screen flex items-center justify-center">
+            <RefreshCw className="animate-spin text-blue-600" size={40} />
+        </div>
+    );
 
-    const generateAndUploadFullPDF = async () => {
-        if (isEditing || isAdminView) return; // Admin shouldn't trigger uploads
-        if (!reportRef.current || !faculty) return;
-        try {
-          const width = 1100;
-          const height = reportRef.current.scrollHeight;
-          const imageBlob = await toBlob(reportRef.current, {
-            backgroundColor: '#ffffff', pixelRatio: 2, width: width, height: height,
-            style: { transform: 'scale(1)', transformOrigin: 'top left', width: `${width}px`, height: `${height}px` },
-            filter: (node: HTMLElement) => !(node.classList && node.classList.contains('no-print'))
-          });
-          if (!imageBlob) return;
-          const imgData = await new Promise<string>((res) => {
-            const reader = new FileReader();
-            reader.onload = () => res(reader.result as string);
-            reader.readAsDataURL(imageBlob);
-          });
-          const pdfWidth = 210;
-          const pdfHeight = (height * pdfWidth) / width;
-          const finalPdf = new jsPDF('p', 'mm', [pdfWidth, pdfHeight]);
-          finalPdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight, undefined, 'FAST');
-          const pdfBlob = finalPdf.output('blob');
-          const timestamp = Date.now();
-          const filePath = `${faculty.staff_no}/report_${timestamp}.pdf`;
-          await supabase.storage.from('faculty-progress-pdfs').upload(filePath, pdfBlob, { upsert: true, contentType: 'application/pdf' });
-          const { data: urlData } = supabase.storage.from('faculty-progress-pdfs').getPublicUrl(filePath);
-          await supabase.from('faculty_progress_reports').insert([{ faculty_id: faculty.staff_no, pdf_url: urlData.publicUrl, created_at: new Date().toISOString() }]);
-          alert("PDF generated and stored!");
-        } catch (error) { alert("Error generating PDF."); }
-      };
-
-    if (loading) return <div className="p-10 text-center font-bold text-blue-600 uppercase tracking-widest">Loading Profile...</div>;
+    const calculatePercentage = () => {
+        if (!progressData) return 0;
+        const unitScore = progressData.units.filter((u: any) => u.completed).length;
+        const resourceScore = (progressData.qb_completed ? 1 : 0) + 
+                             (progressData.assignments_count >= 2 ? 1 : 0) + 
+                             (progressData.videos_completed ? 1 : 0);
+        return Math.round(((unitScore + resourceScore) / 8) * 100);
+    };
 
     return (
-        <div className="min-h-screen bg-gray-100 p-4">
-            {isAdminView && (
-                <div className="max-w-5xl mx-auto mb-4 bg-orange-600 text-white p-3 rounded-lg flex items-center justify-center gap-3 shadow-lg animate-pulse">
-                    <ShieldAlert size={20} />
-                    <span className="font-black uppercase text-sm tracking-widest">Admin Monitoring Mode: View Only</span>
-                </div>
-            )}
-
-            <div className="max-w-5xl mx-auto overflow-visible">
-                <div className="bg-white shadow-2xl p-8 border border-gray-300" ref={reportRef}>
-                    {/* Header */}
-                    <div className="border-b-4 border-double border-black pb-4 mb-8 text-center">
-                        <h1 className="text-xl md:text-2xl font-black uppercase tracking-tight text-gray-900">
-                            Vel Tech High Tech Dr.Rangarajan Dr.Sakunthala Engineering College
+        <div className="min-h-screen bg-[#f8fafc] flex flex-col font-sans">
+            <Navbar />
+            
+            <div className="container mx-auto px-4 py-8 flex-grow">
+                {/* Header Section */}
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-10 gap-4">
+                    <div>
+                        <button 
+                            onClick={() => router.back()} 
+                            className="flex items-center gap-2 text-slate-500 hover:text-blue-600 font-bold text-xs uppercase tracking-widest mb-2 transition-colors"
+                        >
+                            <ArrowLeft size={16} /> Back
+                        </button>
+                        <h1 className="text-3xl font-black text-slate-900 uppercase tracking-tighter flex items-center gap-3">
+                            <BarChart3 className="text-blue-600" size={32} /> 
+                            {isAdminView ? "Faculty Monitoring" : "Teaching Progress"}
                         </h1>
-                        <p className="text-[11px] font-bold uppercase tracking-widest mt-1 text-gray-700">An Autonomous Institution · Affiliated to Anna University</p>
-                        <h2 className="text-xl font-black underline my-6 uppercase tracking-tighter text-center">Faculty Progress Report</h2>
-                        <div className="grid grid-cols-3 gap-4 text-[11px] font-bold text-left px-4">
-                            <p className="flex flex-col font-black text-gray-900"><span className="text-[9px] text-gray-500 uppercase">Faculty Name</span>{faculty?.name}</p>
-                            <p className="flex flex-col font-black text-gray-900"><span className="text-[9px] text-gray-500 uppercase">Staff Number</span>{faculty?.staff_no}</p>
-                            <p className="flex flex-col font-black text-gray-900"><span className="text-[9px] text-gray-500 uppercase">Designation</span>{faculty?.designation}</p>
-                        </div>
+                        <p className="text-slate-500 font-medium italic text-sm">Automated tracking based on database uploads</p>
                     </div>
 
-                    {/* Subjects */}
-                    {subjects.map((sub, sIdx) => (
-                        <div key={sub.id} className="mb-10 border-2 border-black p-6 rounded-lg bg-white">
-                            <h2 className="bg-black text-white px-4 py-1 inline-block text-sm font-bold uppercase mb-4">Subject Block #{sIdx + 1}</h2>
-                            <div className="grid grid-cols-2 gap-4 mb-6">
-                                {['semester', 'academicYear', 'courseCode', 'courseTitle'].map((field) => (
-                                    <div key={field} className="flex flex-col">
-                                        <span className="text-[10px] font-bold text-gray-600 uppercase tracking-tighter">{field.replace(/([A-Z])/g, ' $1')}</span>
-                                        <input disabled={!isEditing || isAdminView} className="border-b border-black p-1 outline-none text-sm font-medium disabled:bg-gray-50 disabled:text-gray-900" value={(sub as any)[field]} onChange={e => {
-                                            const updated = [...subjects]; (updated[sIdx] as any)[field] = e.target.value; setSubjects(updated);
-                                        }} />
-                                    </div>
-                                ))}
-                            </div>
-
-                            {isEditing && !isAdminView && (
-                                <div className="mb-6 no-print bg-gray-50 p-3 border border-dashed border-gray-400 text-center">
-                                    <label className="block text-[10px] font-black mb-2 uppercase">Assign Section:</label>
-                                    <div className="flex justify-center gap-4">
-                                        {['A', 'B', 'C'].map(s => <button key={s} onClick={() => handleSectionSelect(sIdx, s)} className="border-2 border-black px-4 py-1 font-bold text-xs hover:bg-black hover:text-white transition-all uppercase">Section {s}</button>)}
-                                    </div>
-                                </div>
-                            )}
-
-                            {sub.activeSections.map(sec => (
-                                <div key={sec} className="mt-8 border-t-2 border-black pt-4">
-                                    <div className="flex justify-between items-center mb-4">
-                                        <span className="bg-yellow-400 text-black px-3 py-1 text-xs font-black border border-black italic">SECTION {sec}</span>
-                                        {isEditing && !isAdminView && (
-                                            <button onClick={() => removeSection(sIdx, sec)} className="text-red-600 no-print flex items-center gap-1 font-black text-[10px] uppercase hover:underline"><Trash2 size={14} /> Remove Section</button>
-                                        )}
-                                    </div>
-
-                                    {/* Progress Table */}
-                                    <table className="w-full border-collapse border border-black text-[10px] mb-6 text-center">
-                                        <thead className="bg-gray-100"><tr><th className="border border-black p-1">UNIT</th><th className="border border-black p-1">STATUS %</th><th className="border border-black p-1">START DATE</th><th className="border border-black p-1">END DATE</th></tr></thead>
-                                        <tbody>
-                                            {Object.keys(sub.sectionData[sec].unit_progress).map(unit => (
-                                                <tr key={unit}>
-                                                    <td className="border border-black p-1 font-bold bg-gray-50">{unit}</td>
-                                                    {['status', 'start', 'end'].map(type => (
-                                                        <td key={type} className="border border-black p-0">
-                                                            <input disabled={!isEditing || isAdminView} type={type === 'status' ? 'text' : 'date'} className="w-full text-center outline-none p-1 disabled:bg-white disabled:text-gray-900" value={(sub.sectionData[sec].unit_progress as any)[unit][type]} onChange={e => {
-                                                                const updated = [...subjects]; (updated[sIdx].sectionData[sec].unit_progress as any)[unit][type] = e.target.value; setSubjects(updated);
-                                                            }} />
-                                                        </td>
-                                                    ))}
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-
-                                    {/* Checklist */}
-                                    <h4 className="text-[10px] font-bold underline mb-2 uppercase text-center">Course Coverage Checklist</h4>
-                                    <table className="w-full border-collapse border border-black text-[10px] mb-4 text-center">
-                                        <thead className="bg-gray-100"><tr><th className="border border-black p-1 text-left">Deliverables</th>{['U1', 'U2', 'U3', 'U4', 'U5'].map(u => <th key={u} className="border border-black p-1 w-10">{u}</th>)}</tr></thead>
-                                        <tbody>
-                                            {Object.entries(sub.sectionData[sec].coverage_checklist).map(([key, vals]) => (
-                                                <tr key={key}>
-                                                    <td className="border border-black p-1 text-left font-bold bg-gray-50">{key}</td>
-                                                    {vals.map((v, i) => (
-                                                        <td key={i} className={`border border-black font-bold text-lg ${v ? 'bg-blue-100' : ''} text-center`} onClick={() => { if (!isEditing || isAdminView) return; const updated = [...subjects]; updated[sIdx].sectionData[sec].coverage_checklist[key][i] = !v; setSubjects(updated); }}>{v ? '✓' : ''}</td>
-                                                    ))}
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            ))}
-                        </div>
-                    ))}
-
-                    {isEditing && !isAdminView && (
-                        <div className="no-print mb-10 text-center">
-                            <button onClick={addNewSubject} className="bg-blue-600 text-white font-black px-12 py-4 rounded-full hover:bg-blue-700 shadow-xl uppercase text-xs transition-all tracking-widest">+ Add Subject</button>
-                        </div>
-                    )}
-
-                    <div className="mt-10">
-                        <p className="text-[10px] font-black underline uppercase text-center">FACULTY REPORT:</p>
-                        <textarea disabled={!isEditing || isAdminView} className="w-full border border-black p-2 h-20 mt-1 text-xs outline-none disabled:bg-gray-50 disabled:text-gray-900" value={hodRemarks} onChange={e => setHodRemarks(e.target.value)} />
-                    </div>
-
-                    {/* Signatures */}
-                    <div className="mt-20 flex justify-between items-end px-10 pb-4">
-                        <div className="text-center w-48 border-t-2 border-black pt-2"><p className="text-[10px] font-black uppercase">Faculty Signature</p></div>
-                        <div className="text-center w-48 border-t-2 border-black pt-2"><p className="text-[10px] font-black uppercase">HOD Signature</p></div>
-                    </div>
-
-                    {/* Action Buttons: Hidden for Admin */}
-                    {!isAdminView && (
-                        <div className="mt-12 no-print flex flex-col gap-4 text-center">
-                            <div className="grid grid-cols-2 gap-4">
-                                <button onClick={handleSaveDataOnly} className="bg-blue-900 text-white font-black py-4 rounded hover:bg-blue-800 uppercase shadow-lg text-sm tracking-widest transition-all">Save All Data</button>
-                                <button onClick={() => setIsEditing(true)} className="bg-orange-500 text-white font-black py-4 rounded hover:bg-orange-600 uppercase shadow-lg text-sm tracking-widest transition-all">Edit Details</button>
-                            </div>
-                            <button onClick={generateAndUploadFullPDF} className={`w-full font-black py-5 rounded uppercase shadow-2xl text-base tracking-widest transition-all ${isEditing ? 'bg-gray-400 cursor-not-allowed text-gray-200' : 'bg-green-700 text-white hover:bg-green-800'}`}>
-                                {isEditing ? "Save All Data First to Enable PDF" : "Upload Full Report PDF"}
+                    <div className="flex bg-white p-1 rounded-xl shadow-sm border">
+                        {courses.map((c) => (
+                            <button
+                                key={c.code + c.section}
+                                onClick={() => setSelectedCourse(c)}
+                                className={`px-6 py-2.5 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${
+                                    selectedCourse?.code === c.code && selectedCourse?.section === c.section
+                                    ? 'bg-blue-600 text-white shadow-md'
+                                    : 'text-slate-400 hover:text-slate-600'
+                                }`}
+                            >
+                                {c.code} ({c.section})
                             </button>
-                        </div>
-                    )}
+                        ))}
+                    </div>
                 </div>
+
+                {progressData ? (
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                        
+                        {/* LEFT: Overall Score Card */}
+                        <div className="lg:col-span-1 space-y-6">
+                            <div className="bg-white rounded-3xl p-8 shadow-xl shadow-blue-100 border border-blue-50 text-center relative overflow-hidden group">
+                                <div className="absolute top-0 left-0 w-full h-2 bg-blue-600"></div>
+                                <Award className="mx-auto text-orange-400 mb-4 group-hover:scale-110 transition-transform" size={48} />
+                                <h3 className="text-slate-400 font-black uppercase text-[10px] tracking-[0.2em] mb-2">Subject Readiness</h3>
+                                <div className="text-7xl font-black text-slate-900 mb-2">{calculatePercentage()}%</div>
+                                <div className="w-full bg-slate-100 h-3 rounded-full overflow-hidden border p-0.5">
+                                    <div 
+                                        className="h-full bg-gradient-to-r from-blue-600 to-indigo-500 rounded-full transition-all duration-1000"
+                                        style={{ width: `${calculatePercentage()}%` }}
+                                    ></div>
+                                </div>
+                                <p className="mt-6 text-xs text-slate-400 font-medium">
+                                    {calculatePercentage() === 100 ? "🎉 Course fully prepared for semester!" : "Complete all uploads to reach 100%"}
+                                </p>
+                            </div>
+
+                            <div className="bg-slate-900 rounded-3xl p-8 text-white shadow-2xl relative overflow-hidden">
+                                <Zap className="absolute -right-4 -top-4 text-white/10" size={120} />
+                                <h3 className="font-bold text-orange-400 uppercase text-[10px] tracking-widest mb-4">Quick Stats</h3>
+                                <div className="space-y-4 relative z-10">
+                                    <div className="flex justify-between">
+                                        <span className="text-slate-400 text-sm font-medium">Units Completed</span>
+                                        <span className="font-black">{progressData.units.filter((u:any)=>u.completed).length} / 5</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-slate-400 text-sm font-medium">Assignments</span>
+                                        <span className="font-black">{progressData.assignments_count} / 2</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* RIGHT: Detailed Stepper */}
+                        <div className="lg:col-span-2 space-y-8">
+                            
+                            {/* Syllabus Timeline */}
+                            <div className="bg-white rounded-3xl p-10 shadow-lg border border-slate-100">
+                                <div className="flex items-center gap-3 mb-10 border-b pb-6">
+                                    <div className="bg-blue-50 p-2 rounded-lg"><LayoutDashboard className="text-blue-600" /></div>
+                                    <h3 className="text-lg font-black text-slate-800 uppercase tracking-tighter">Syllabus Milestones</h3>
+                                </div>
+
+                                <div className="space-y-10 relative">
+                                    {/* Vertical Line */}
+                                    <div className="absolute left-6 top-2 bottom-2 w-0.5 bg-slate-100"></div>
+
+                                    {progressData.units.map((u: any) => (
+                                        <div key={u.unit} className="flex items-start gap-8 relative z-10 group">
+                                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all duration-500 shadow-lg ${
+                                                u.completed 
+                                                ? 'bg-green-500 text-white rotate-0' 
+                                                : 'bg-white border-2 border-slate-100 text-slate-300 -rotate-12 group-hover:rotate-0'
+                                            }`}>
+                                                {u.completed ? <CheckCircle2 size={24} /> : <span className="font-black">0{u.unit}</span>}
+                                            </div>
+                                            <div className="flex-grow pt-1">
+                                                <div className="flex justify-between items-center">
+                                                    <h4 className={`font-black uppercase tracking-tight ${u.completed ? 'text-slate-800' : 'text-slate-300'}`}>
+                                                        Unit Module {u.unit}
+                                                    </h4>
+                                                    {u.completed && (
+                                                        <span className="bg-green-50 text-green-600 text-[10px] font-black px-3 py-1 rounded-full uppercase">Verified</span>
+                                                    )}
+                                                </div>
+                                                <p className="text-xs text-slate-400 font-medium mt-1">
+                                                    {u.completed ? "Syllabus topic saved & lecture notes uploaded." : "Requires topic entry and PDF notes upload."}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Resources Grid */}
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                <div className={`p-6 rounded-3xl border-2 transition-all ${progressData.qb_completed ? 'bg-white border-blue-100 shadow-md' : 'bg-gray-50 border-transparent opacity-60'}`}>
+                                    <BookOpen className={`mb-4 ${progressData.qb_completed ? 'text-blue-600' : 'text-slate-400'}`} size={28} />
+                                    <h4 className="font-black text-xs uppercase text-slate-800">Question Bank</h4>
+                                    <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase">{progressData.qb_completed ? "Completed" : "Pending"}</p>
+                                </div>
+
+                                <div className={`p-6 rounded-3xl border-2 transition-all ${progressData.assignments_count >= 2 ? 'bg-white border-orange-100 shadow-md' : 'bg-gray-50 border-transparent opacity-60'}`}>
+                                    <ClipboardList className={`mb-4 ${progressData.assignments_count >= 2 ? 'text-orange-500' : 'text-slate-400'}`} size={28} />
+                                    <h4 className="font-black text-xs uppercase text-slate-800">Assignments</h4>
+                                    <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase">{progressData.assignments_count} of 2 Uploaded</p>
+                                </div>
+
+                                <div className={`p-6 rounded-3xl border-2 transition-all ${progressData.videos_completed ? 'bg-white border-red-100 shadow-md' : 'bg-gray-50 border-transparent opacity-60'}`}>
+                                    <Youtube className={`mb-4 ${progressData.videos_completed ? 'text-red-600' : 'text-slate-400'}`} size={28} />
+                                    <h4 className="font-black text-xs uppercase text-slate-800">Unit Videos</h4>
+                                    <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase">{progressData.videos_completed ? "Verified" : "Pending"}</p>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+                ) : (
+                    <div className="text-center py-20 bg-white rounded-3xl border border-dashed border-slate-200">
+                        <Zap className="mx-auto text-slate-200 mb-4" size={48} />
+                        <p className="text-slate-400 font-bold">Waiting for database synchronization...</p>
+                    </div>
+                )}
             </div>
+            <Footer />
         </div>
     );
 }
 
-// Wrapping in Suspense because of useSearchParams
-export default function ProgressPage() {
+export default function FacultyProgressPage() {
     return (
-        <Suspense fallback={<div className="p-10 text-center font-bold text-blue-600">Loading...</div>}>
+        <Suspense fallback={<div>Loading Tracker...</div>}>
             <ProgressContent />
         </Suspense>
     );

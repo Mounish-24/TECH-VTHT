@@ -8,15 +8,8 @@ import Footer from '@/components/Footer';
 import {
     FileText, BookOpen, Bell, CheckCircle, Download,
     ArrowLeft, ClipboardList, PlayCircle, ExternalLink,
-    RefreshCw
+    RefreshCw, ChevronRight
 } from 'lucide-react';
-
-// Utility function to extract YouTube video ID
-function getYouTubeId(url: string): string | null {
-    const regex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/i;
-    const match = url.match(regex);
-    return match ? match[1] : null;
-}
 
 export default function CourseDetailPage({ params }: { params: Promise<{ id: string }> }) {
     const router = useRouter();
@@ -25,13 +18,11 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
 
     const [activeTab, setActiveTab] = useState('notes');
     const [materials, setMaterials] = useState<any[]>([]);
+    const [syllabusTopics, setSyllabusTopics] = useState<any[]>([]); // New state for Unit Headers
     const [announcements, setAnnouncements] = useState<any[]>([]);
     const [studentProfile, setStudentProfile] = useState<any>(null);
     const [marks, setMarks] = useState<any>(null);
     const [loading, setLoading] = useState(true);
-
-    // New state for selected video in Videos tab
-    const [selectedVideo, setSelectedVideo] = useState<any | null>(null);
 
     const fetchCourseContent = async () => {
         const userId = localStorage.getItem('user_id');
@@ -40,12 +31,12 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
         try {
             // 1. Fetch Student Profile
             const stuRes = await axios.get(`${API_URL}/student/${userId}`);
-            setStudentProfile(stuRes.data);
+            const studentData = stuRes.data;
+            setStudentProfile(studentData);
 
             const cleanId = courseId.toString().trim().toUpperCase();
-            console.log(`[CLIENT-FETCH] Synchronizing resources for: "${cleanId}"`);
 
-            // 2. Fetch Materials with Triple-Path Fallback
+            // 2. Fetch Materials
             let matRes;
             try {
                 matRes = await axios.get(`${API_URL}/materials/${encodeURIComponent(cleanId)}`);
@@ -53,44 +44,42 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                     matRes = await axios.get(`${API_URL}/materials/course/${encodeURIComponent(cleanId)}`);
                 }
             } catch (err) {
-                console.warn("[DEBUG] Primary fetch failed, attempting sub-route fallback.");
                 matRes = await axios.get(`${API_URL}/materials/course/${encodeURIComponent(cleanId)}`);
             }
-
-            const rawData = matRes.data || [];
-            const theoryMaterials = rawData.filter((m: any) =>
+            const theoryMaterials = (matRes.data || []).filter((m: any) =>
                 m.type !== 'Lab Manual' && m.type !== 'Lab'
             );
             setMaterials(theoryMaterials);
 
-            // 3. Fetch Specific Announcements
+            // 3. NEW: Fetch Syllabus Topics (For Unit-wise headers)
+            // This pulls the topics saved by faculty via the backend we built
+            // 3. Fetch Syllabus Topics (For Unit-wise headers)
+            const topicsRes = await axios.get(
+                `${API_URL}/syllabus/${encodeURIComponent(cleanId)}/${encodeURIComponent(studentData.section)}`
+            );
+            setSyllabusTopics(topicsRes.data || []);
+            // 4. Fetch Announcements
             const annRes = await axios.get(`${API_URL}/announcements?student_id=${userId}`);
-            const rawAnnouncements = annRes.data || [];
-            const specificNotices = rawAnnouncements.filter((a: any) =>
+            const specificNotices = (annRes.data || []).filter((a: any) =>
                 a.course_code?.trim().toUpperCase() === cleanId ||
                 a.course_code === "Global" ||
                 a.title.toUpperCase().includes(cleanId)
             );
             setAnnouncements(specificNotices);
 
-            // 4. Fetch specific marks/attendance
+            // 5. Fetch Marks
             const marksRes = await axios.get(`${API_URL}/marks/cia?student_id=${userId}`);
-            const rawMarks = marksRes.data || [];
-            const specificMark = rawMarks.find((m: any) =>
+            const specificMark = (marksRes.data || []).find((m: any) =>
                 m.course_code?.trim().toUpperCase() === cleanId ||
                 m.subject?.trim().toUpperCase() === cleanId
             );
             setMarks(specificMark);
+
         } catch (error) {
-            console.error("Critical connection or parsing error:", error);
+            console.error("Sync error:", error);
         } finally {
             setLoading(false);
         }
-    };
-
-    const refreshMaterials = async () => {
-        setLoading(true);
-        await fetchCourseContent();
     };
 
     useEffect(() => {
@@ -99,10 +88,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
 
     if (loading) return (
         <div className="min-h-screen flex items-center justify-center bg-white">
-            <div className="flex flex-col items-center gap-4">
-                <RefreshCw className="animate-spin text-blue-900" size={40} />
-                <p className="font-black text-blue-900 uppercase tracking-widest text-xs">Fetching Course Material...</p>
-            </div>
+            <RefreshCw className="animate-spin text-blue-900" size={40} />
         </div>
     );
 
@@ -110,52 +96,48 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
         <div className="min-h-screen flex flex-col bg-gray-50">
             <Navbar />
 
+            {/* HEADER SECTION */}
             <div className="bg-blue-900 text-white py-10 shadow-lg border-b-4 border-orange-500">
                 <div className="container mx-auto px-4">
                     <div className="flex justify-between items-center mb-3">
-                        <button onClick={() => router.push('/student')} className="flex items-center gap-2 text-sm hover:text-orange-400 opacity-80 transition font-bold uppercase tracking-widest">
-                            <ArrowLeft size={16} /> Back to Dashboard
+                        <button onClick={() => router.push('/student')} className="flex items-center gap-2 text-sm hover:text-orange-400 font-bold uppercase">
+                            <ArrowLeft size={16} /> Back
                         </button>
-                        <button
-                            onClick={refreshMaterials}
-                            className="flex items-center gap-2 text-sm bg-white/20 hover:bg-white/30 px-3 py-1 rounded transition font-bold uppercase tracking-widest"
-                        >
-                            <RefreshCw size={14} /> Force Sync
+                        <button onClick={fetchCourseContent} className="text-sm bg-white/20 px-3 py-1 rounded font-bold uppercase tracking-widest">
+                            <RefreshCw size={14} className="inline mr-1" /> Sync
                         </button>
                     </div>
                     <div className="flex justify-between items-end">
                         <div>
-                            <h1 className="text-4xl font-black tracking-tight uppercase">{courseId}</h1>
-                            <p className="opacity-80 font-medium tracking-wide uppercase text-xs mt-1">Theory Subject Portal</p>
+                            <h1 className="text-4xl font-black uppercase">{courseId}</h1>
+                            <p className="opacity-80 uppercase text-xs mt-1">Academic Resource Portal</p>
                         </div>
-                        <div className="text-right">
-                            <span className="bg-orange-500 text-white px-3 py-1 rounded text-[10px] font-black uppercase tracking-tighter">
-                                Section {studentProfile?.section || 'N/A'}
-                            </span>
-                        </div>
+                        <span className="bg-orange-500 text-white px-3 py-1 rounded text-[10px] font-black uppercase">
+                            Section {studentProfile?.section}
+                        </span>
                     </div>
                 </div>
             </div>
 
             <div className="container mx-auto px-4 py-8 flex-grow">
-                <div className="bg-white rounded-xl shadow-xl overflow-hidden min-h-[550px] border border-gray-100">
+                <div className="bg-white rounded-xl shadow-xl overflow-hidden min-h-[600px] border border-gray-100">
 
-                    {/* TABS SECTION */}
-                    <div className="flex overflow-x-auto border-b bg-gray-50/50 sticky top-0 z-10 no-scrollbar">
+                    {/* TABS */}
+                    <div className="flex overflow-x-auto border-b bg-gray-50/50 no-scrollbar">
                         {[
-                            { id: 'notes', label: 'Notes', icon: FileText },
+                            { id: 'notes', label: 'Unit Materials', icon: FileText },
                             { id: 'qb', label: 'Question Bank', icon: BookOpen },
                             { id: 'videos', label: 'Videos', icon: PlayCircle },
                             { id: 'assignments', label: 'Assignments', icon: ClipboardList },
-                            { id: 'announcements', label: 'Announcements', icon: Bell },
+                            { id: 'announcements', label: 'Notices', icon: Bell },
                             { id: 'attendance', label: 'Attendance', icon: CheckCircle },
                         ].map((tab) => (
                             <button
                                 key={tab.id}
                                 onClick={() => setActiveTab(tab.id)}
-                                className={`flex items-center px-8 py-5 font-bold transition whitespace-nowrap border-b-4 uppercase text-[10px] tracking-widest ${activeTab === tab.id
-                                    ? 'bg-white text-blue-900 border-b-blue-900 border-t-4 border-t-orange-500 shadow-sm'
-                                    : 'text-gray-400 hover:text-blue-900 hover:bg-white/80'
+                                className={`flex items-center px-8 py-5 font-bold transition border-b-4 uppercase text-[10px] tracking-widest ${activeTab === tab.id
+                                    ? 'bg-white text-blue-900 border-b-blue-900 border-t-4 border-t-orange-500'
+                                    : 'text-gray-400 hover:text-blue-900'
                                     }`}
                             >
                                 <tab.icon size={18} className="mr-2" />
@@ -165,271 +147,136 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                     </div>
 
                     <div className="p-8">
-                        {/* LECTURE NOTES TAB */}
+                        {/* UNIT-WISE NOTES LOGIC */}
                         {activeTab === 'notes' && (
-                            <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
-                                {/* ... existing notes content remains unchanged ... */}
-                                <div className="flex justify-between items-center mb-6">
-                                    <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2 uppercase tracking-tighter text-sm">
-                                        <FileText className="text-blue-900" size={20} /> Unit Wise Academic Notes
-                                    </h2>
-                                    <span className="text-xs bg-blue-100 text-blue-800 px-3 py-1 rounded-full font-bold">
-                                        {materials.filter(m => m.type === 'Lecture Notes').length} files detected
-                                    </span>
-                                </div>
-                                {materials.filter(m => m.type === 'Lecture Notes').length > 0 ? (
-                                    materials.filter(m => m.type === 'Lecture Notes').map((note, i) => (
-                                        <div key={i} className="flex items-center justify-between p-5 border-b last:border-0 hover:bg-blue-50/50 transition group rounded-lg mb-3">
-                                            <div className="flex items-center">
-                                                <div className="p-3 bg-blue-100 text-blue-600 rounded-lg mr-4 group-hover:bg-blue-600 group-hover:text-white transition-colors">
-                                                    <FileText size={20} />
-                                                </div>
-                                                <div>
-                                                    <p className="font-bold text-gray-800 uppercase tracking-tight text-sm">{note.title}</p>
-                                                    <p className="text-[10px] text-gray-500 mt-1 uppercase font-bold tracking-tighter">Uploaded by Staff: {note.posted_by}</p>
-                                                </div>
-                                            </div>
-                                            <a
-                                                href={note.file_link}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                                className="flex items-center gap-2 text-blue-900 text-[10px] font-black border-2 border-blue-900 px-4 py-2 rounded-lg hover:bg-blue-900 hover:text-white transition uppercase tracking-widest shadow-sm"
-                                            >
-                                                <Download size={14} /> View File
-                                            </a>
-                                        </div>
-                                    ))
-                                ) : (
-                                    <div className="text-center py-24 bg-gray-50/50 rounded-2xl border-2 border-dashed">
-                                        <FileText className="mx-auto text-gray-200 mb-4" size={60} />
-                                        <p className="text-gray-400 italic font-bold uppercase text-[10px] tracking-[0.2em]">No lecture notes available yet.</p>
-                                    </div>
-                                )}
-                            </div>
-                        )}
+                            <div className="space-y-8 animate-in fade-in duration-500">
+                                {[1, 2, 3, 4, 5].map((unitNum) => {
+                                    // Logic: Find the topic name for this unit
+                                    const unitTopic = syllabusTopics.find(t => t.unit_no === unitNum);
+                                    // Logic: Find all notes belonging to this unit
+                                    const unitNotes = materials.filter(m =>
+                                        m.type === 'Lecture Notes' && m.title.includes(`Unit ${unitNum}`)
+                                    );
 
-                        {/* QUESTION BANK TAB */}
-                        {activeTab === 'qb' && (
-                            <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
-                                {/* ... existing qb content remains unchanged ... */}
-                                <div className="flex justify-between items-center mb-6">
-                                    <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2 uppercase tracking-tighter text-sm">
-                                        <BookOpen className="text-teal-600" size={20} /> Exam Specific Question Bank
-                                    </h2>
-                                    <span className="text-xs bg-teal-100 text-teal-800 px-3 py-1 rounded-full font-bold">
-                                        {materials.filter(m => m.type === 'Question Bank').length} items found
-                                    </span>
-                                </div>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    {materials.filter(m => m.type === 'Question Bank').length > 0 ? (
-                                        materials.filter(m => m.type === 'Question Bank').map((q, i) => (
-                                            <div key={i} className="p-5 border rounded-xl hover:shadow-lg flex justify-between items-center bg-gray-50 border-gray-100 transition-all group">
+                                    return (
+                                        <div key={unitNum} className="border-2 border-gray-100 rounded-2xl overflow-hidden bg-white shadow-sm">
+                                            <div className="bg-blue-900 p-4 flex justify-between items-center">
                                                 <div className="flex items-center gap-3">
-                                                    <div className="bg-teal-100 p-2 rounded-lg text-teal-600 group-hover:bg-teal-600 group-hover:text-white transition-colors">
-                                                        <BookOpen size={20} />
+                                                    <div className="bg-orange-500 text-white w-8 h-8 rounded-lg flex items-center justify-center font-black text-sm">
+                                                        {unitNum}
                                                     </div>
-                                                    <span className="font-bold text-gray-800 text-xs uppercase tracking-tight">{q.title}</span>
+                                                    <div>
+                                                        <h3 className="text-white text-[10px] font-black uppercase tracking-widest opacity-70">Unit Module</h3>
+                                                        <p className="text-white font-bold text-sm uppercase">
+                                                            {unitTopic ? unitTopic.topic_name : `Module ${unitNum} Content`}
+                                                        </p>
+                                                    </div>
                                                 </div>
-                                                <a
-                                                    href={q.file_link}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
-                                                    className="text-white bg-teal-600 px-4 py-2 rounded-lg text-[9px] font-black hover:bg-teal-700 shadow-md transition uppercase tracking-widest"
-                                                >
-                                                    Access QB
-                                                </a>
-                                            </div>
-                                        ))
-                                    ) : (
-                                        <div className="col-span-full text-center py-24 bg-gray-50/50 rounded-2xl border-2 border-dashed">
-                                            <BookOpen className="mx-auto text-gray-200 mb-4" size={60} />
-                                            <p className="text-gray-400 italic font-bold uppercase text-[10px] tracking-[0.2em]">Question Bank is being prepared.</p>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        )}
-
-                        {/* UPDATED VIDEOS TAB */}
-                        {activeTab === 'videos' && (
-                            <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
-                                <div className="flex justify-between items-center mb-6">
-                                    <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2 uppercase tracking-tighter text-sm">
-                                        <PlayCircle className="text-pink-600" size={20} /> Recommended Video Tutorials
-                                    </h2>
-                                </div>
-
-                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                                    {materials.filter(m => m.type === 'YouTube Video').length > 0 ? (
-                                        materials
-                                            .filter(m => m.type === 'YouTube Video')
-                                            .map((video, i) => {
-                                                const videoId = getYouTubeId(video.file_link);
-                                                const isPlaying = selectedVideo?.file_link === video.file_link;
-
-                                                return (
-                                                    <div
-                                                        key={i}
-                                                        className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow hover:shadow-xl transition-all group"
-                                                    >
-                                                        <div className="relative aspect-video bg-black">
-                                                            {isPlaying && videoId ? (
-                                                                <iframe
-                                                                    src={`https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&modestbranding=1`}
-                                                                    title={video.title}
-                                                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                                                                    allowFullScreen
-                                                                    className="absolute inset-0 w-full h-full"
-                                                                />
-                                                            ) : (
-                                                                <>
-                                                                    {videoId ? (
-                                                                        <img
-                                                                            src={`https://img.youtube.com/vi/${videoId}/hqdefault.jpg`}
-                                                                            alt={video.title}
-                                                                            className="w-full h-full object-cover"
-                                                                            loading="lazy"
-                                                                        />
-                                                                    ) : (
-                                                                        <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-gray-800 to-gray-900">
-                                                                            <PlayCircle size={64} className="text-pink-500 opacity-70" />
-                                                                        </div>
-                                                                    )}
-
-                                                                    {/* Play overlay */}
-                                                                    <button
-                                                                        onClick={() => setSelectedVideo(isPlaying ? null : video)}
-                                                                        className="absolute inset-0 flex items-center justify-center bg-black/20 hover:bg-black/40 transition-all group-hover:bg-black/30"
-                                                                        aria-label={isPlaying ? "Pause video" : "Play video"}
-                                                                    >
-                                                                        <div className="bg-white/90 rounded-full p-4 transform group-hover:scale-110 transition-transform">
-                                                                            {isPlaying ? (
-                                                                                <svg className="w-10 h-10 text-pink-600" fill="currentColor" viewBox="0 0 24 24">
-                                                                                    <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
-                                                                                </svg>
-                                                                            ) : (
-                                                                                <PlayCircle size={40} className="text-pink-600 drop-shadow-lg" />
-                                                                            )}
-                                                                        </div>
-                                                                    </button>
-
-                                                                    {/* YouTube badge */}
-                                                                    <div className="absolute bottom-3 right-3 bg-black/75 text-white text-xs px-2 py-1 rounded font-bold uppercase tracking-wider">
-                                                                        YouTube
-                                                                    </div>
-                                                                </>
-                                                            )}
-                                                        </div>
-
-                                                        <div className="p-4">
-                                                            <h3 className="font-bold text-gray-900 mb-1.5 line-clamp-2 text-base">
-                                                                {video.title}
-                                                            </h3>
-                                                            <div className="flex justify-between items-center text-sm">
-                                                                <span className="text-gray-600">
-                                                                    {video.posted_by || 'Staff'} • Reference
-                                                                </span>
-                                                                {videoId && (
-                                                                    <a
-                                                                        href={video.file_link}
-                                                                        target="_blank"
-                                                                        rel="noopener noreferrer"
-                                                                        className="text-pink-600 hover:text-pink-800 flex items-center gap-1 text-xs hover:underline"
-                                                                        onClick={e => e.stopPropagation()}
-                                                                    >
-                                                                        Open in YT <ExternalLink size={14} />
-                                                                    </a>
-                                                                )}
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                );
-                                            })
-                                    ) : (
-                                        <div className="col-span-full text-center py-32 bg-gray-50/70 rounded-2xl border-2 border-dashed">
-                                            <PlayCircle className="mx-auto text-gray-300 mb-5" size={80} />
-                                            <p className="text-gray-500 font-medium text-lg">
-                                                No reference videos shared yet.
-                                            </p>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        )}
-                        {/* ASSIGNMENTS TAB */}
-                        {activeTab === 'assignments' && (
-                            <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
-                                {/* ... existing assignments content remains unchanged ... */}
-                                <div className="flex justify-between items-center mb-6">
-                                    <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2 uppercase tracking-tighter text-sm">
-                                        <ClipboardList className="text-orange-500" size={20} /> Subject Assignments
-                                    </h2>
-                                </div>
-                                {materials.filter(m => m.type === 'Assignment').length > 0 ? (
-                                    materials.filter(m => m.type === 'Assignment').map((assn, i) => (
-                                        <div key={i} className="flex items-center justify-between p-5 border-l-8 border-orange-500 bg-white shadow-sm rounded-r-lg mb-4 hover:shadow-md transition border border-gray-100">
-                                            <div>
-                                                <p className="font-black text-gray-800 text-md uppercase tracking-tight">{assn.title}</p>
-                                                <p className="text-[10px] text-gray-400 font-bold uppercase mt-1">Shared by: {assn.posted_by}</p>
-                                            </div>
-                                            <a
-                                                href={assn.file_link}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                                className="bg-orange-500 text-white px-5 py-2 rounded-lg text-[9px] font-black hover:bg-orange-600 uppercase tracking-widest transition shadow-md"
-                                            >
-                                                Download Brief
-                                            </a>
-                                        </div>
-                                    ))
-                                ) : (
-                                    <div className="text-center py-24 bg-gray-50/50 rounded-2xl border-2 border-dashed">
-                                        <ClipboardList className="mx-auto text-gray-200 mb-4" size={60} />
-                                        <p className="text-gray-400 italic font-bold uppercase text-[10px] tracking-[0.2em]">No assignment schedules found.</p>
-                                    </div>
-                                )}
-                            </div>
-                        )}
-
-                        {/* ANNOUNCEMENT TAB */}
-                        {activeTab === 'announcements' && (
-                            <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
-                                {/* ... existing announcements content remains unchanged ... */}
-                                <div className="flex justify-between items-center mb-6">
-                                    <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2 uppercase tracking-tighter text-sm">
-                                        <Bell className="text-yellow-500" size={20} /> Latest Subject Notices
-                                    </h2>
-                                </div>
-                                {announcements.length > 0 ? (
-                                    announcements.map((ann, i) => (
-                                        <div key={i} className="bg-yellow-50/30 border-l-8 border-yellow-500 p-6 rounded-r-xl mb-4 shadow-sm border border-yellow-100">
-                                            <div className="flex justify-between items-start">
-                                                <p className="font-black text-blue-900 text-lg uppercase tracking-tight">{ann.title}</p>
-                                                <span className="text-[9px] bg-yellow-200 text-yellow-800 px-3 py-1 rounded-full font-black uppercase tracking-widest">
-                                                    {ann.course_code === "Global" ? "General Info" : "Subject Notice"}
+                                                <span className="bg-white/10 text-white text-[9px] px-3 py-1 rounded-full font-black uppercase">
+                                                    {unitNotes.length} Files
                                                 </span>
                                             </div>
-                                            <p className="text-sm text-gray-700 mt-2 font-medium leading-relaxed">{ann.content}</p>
-                                            <p className="text-[9px] text-gray-400 mt-4 uppercase font-bold tracking-widest">Broadcast Date: {new Date(ann.created_at).toLocaleDateString()}</p>
+
+                                            <div className="p-4 bg-gray-50/30">
+                                                {unitNotes.length > 0 ? (
+                                                    <div className="space-y-3">
+                                                        {unitNotes.map((note, i) => (
+                                                            <div key={i} className="flex items-center justify-between p-4 bg-white rounded-xl border border-gray-100 hover:border-blue-400 transition-all group shadow-sm">
+                                                                <div className="flex items-center gap-4">
+                                                                    <div className="p-2 bg-blue-50 text-blue-600 rounded-lg group-hover:bg-blue-600 group-hover:text-white transition-colors">
+                                                                        <FileText size={20} />
+                                                                    </div>
+                                                                    <div>
+                                                                        <p className="text-sm font-bold text-gray-800 uppercase tracking-tight">{note.title}</p>
+                                                                        <p className="text-[9px] text-gray-400 font-bold uppercase mt-0.5">Reference: {note.posted_by}</p>
+                                                                    </div>
+                                                                </div>
+                                                                <a href={note.file_link} target="_blank" className="p-2.5 bg-gray-100 text-gray-500 hover:bg-blue-900 hover:text-white rounded-xl transition-all shadow-sm">
+                                                                    <Download size={18} />
+                                                                </a>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                ) : (
+                                                    <div className="py-10 text-center">
+                                                        <p className="text-gray-300 text-[10px] font-black uppercase tracking-[0.2em] italic">
+                                                            No unit {unitNum} notes uploaded by faculty yet
+                                                        </p>
+                                                    </div>
+                                                )}
+                                            </div>
                                         </div>
-                                    ))
-                                ) : (
-                                    <div className="text-center py-24 bg-gray-50/50 rounded-2xl border-2 border-dashed">
-                                        <Bell className="mx-auto text-gray-200 mb-4" size={60} />
-                                        <p className="text-gray-400 italic font-bold uppercase text-[10px] tracking-[0.2em]">No specific subject notices broadcasted.</p>
-                                    </div>
-                                )}
+                                    );
+                                })}
                             </div>
                         )}
 
-                        {/* ATTENDANCE TAB */}
+                        {/* QUESTION BANK */}
+                        {activeTab === 'qb' && (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in duration-300">
+                                {materials.filter(m => m.type === 'Question Bank').map((q, i) => (
+                                    <div key={i} className="p-5 border rounded-xl flex justify-between items-center bg-gray-50 group">
+                                        <div className="flex items-center gap-3">
+                                            <BookOpen className="text-teal-600" />
+                                            <span className="font-bold text-gray-800 text-xs uppercase">{q.title}</span>
+                                        </div>
+                                        <a href={q.file_link} target="_blank" className="text-white bg-teal-600 px-4 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest">Access</a>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        {/* VIDEOS */}
+                        {activeTab === 'videos' && (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in duration-300">
+                                {materials.filter(m => m.type === 'YouTube Video').map((video, i) => (
+                                    <div key={i} className="bg-white border rounded-xl overflow-hidden group">
+                                        <div className="aspect-video bg-blue-900 flex items-center justify-center relative">
+                                            <PlayCircle size={48} className="text-white opacity-50 group-hover:opacity-100 transition-opacity" />
+                                        </div>
+                                        <div className="p-4 text-center">
+                                            <h3 className="font-bold text-gray-800 mb-3 text-xs uppercase truncate">{video.title}</h3>
+                                            <a href={video.file_link} target="_blank" className="inline-block bg-pink-600 text-white px-6 py-2 rounded-lg text-[10px] font-black uppercase">Watch Now</a>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        {/* ASSIGNMENTS */}
+                        {activeTab === 'assignments' && (
+                            <div className="space-y-4">
+                                {materials.filter(m => m.type === 'Assignment').map((assn, i) => (
+                                    <div key={i} className="flex items-center justify-between p-5 border-l-8 border-orange-500 bg-white shadow-sm rounded-r-lg border border-gray-100">
+                                        <div>
+                                            <p className="font-black text-gray-800 uppercase tracking-tight">{assn.title}</p>
+                                            <p className="text-[10px] text-gray-400 font-bold uppercase">Source: Faculty Dashboard</p>
+                                        </div>
+                                        <a href={assn.file_link} target="_blank" className="bg-orange-500 text-white px-5 py-2 rounded-lg text-[9px] font-black uppercase shadow-md">Download</a>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        {/* ANNOUNCEMENTS */}
+                        {activeTab === 'announcements' && (
+                            <div className="space-y-4">
+                                {announcements.map((ann, i) => (
+                                    <div key={i} className="bg-yellow-50/30 border-l-8 border-yellow-500 p-6 rounded-r-xl border border-yellow-100 shadow-sm">
+                                        <div className="flex justify-between items-start">
+                                            <p className="font-black text-blue-900 text-lg uppercase">{ann.title}</p>
+                                            <span className="text-[9px] bg-yellow-200 px-3 py-1 rounded-full font-black uppercase">Notice</span>
+                                        </div>
+                                        <p className="text-sm text-gray-700 mt-2 font-medium">{ann.content}</p>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        {/* ATTENDANCE */}
                         {activeTab === 'attendance' && (
-                            <div className="text-center py-12 animate-in zoom-in duration-300">
-                                {/* ... existing attendance content remains unchanged ... */}
-                                <h2 className="text-xl font-black mb-10 text-gray-800 uppercase tracking-widest">
-                                    Current Attendance: {courseId}
-                                </h2>
-                                <div className="relative inline-flex items-center justify-center mb-8">
+                            <div className="text-center py-12">
+                                <div className="relative inline-flex items-center justify-center">
                                     <svg className="w-48 h-48 transform -rotate-90">
                                         <circle cx="96" cy="96" r="80" stroke="#f3f4f6" strokeWidth="12" fill="transparent" />
                                         <circle
@@ -443,16 +290,9 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                                     </svg>
                                     <div className="absolute flex flex-col items-center">
                                         <span className="text-5xl font-black text-blue-900">{(marks?.subject_attendance || 0)}%</span>
-                                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Present</span>
+                                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Attendance</span>
                                     </div>
                                 </div>
-                                <p className="text-gray-500 font-medium italic text-xs uppercase tracking-tighter">*Data synchronized from official faculty registry.</p>
-
-                                {(marks?.subject_attendance || 0) < 75 && (
-                                    <div className="mt-8 p-4 bg-red-50 border-2 border-red-100 rounded-xl text-red-600 text-[10px] font-black uppercase tracking-[0.2em] shadow-sm inline-block animate-pulse">
-                                        ⚠️ Attendance Critical: Below 75% Requirement ⚠️
-                                    </div>
-                                )}
                             </div>
                         )}
                     </div>

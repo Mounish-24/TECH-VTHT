@@ -106,3 +106,17 @@ class Material(MaterialCreate):
     id: int
     class Config:
         from_attributes = True
+
+# ==========================================
+# NEW: SYLLABUS TOPIC SCHEMAS
+# ==========================================
+class TopicCreate(BaseModel):
+    course_code: str
+    section: str
+    unit_no: int
+    topic_name: str
+
+class Topic(TopicCreate):
+    id: int
+    class Config:
+        from_attributes = True

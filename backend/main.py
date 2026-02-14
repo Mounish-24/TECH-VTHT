@@ -34,30 +34,30 @@ models.Base.metadata.create_all(bind=engine)
 
 # --- DATABASE MIGRATION & CLEANUP CHECK ---
 def ensure_profile_columns():
-    """Safely adds columns and cleans up existing data formatting issues."""
+    """Safely adds columns and cleans up existing data formatting issues. Updated for Supabase compatibility."""
     try:
+        # Get the database dialect (sqlite vs postgresql)
+        db_type = engine.name
+        
         with engine.connect() as conn:
-            # Check Faculty table
-            col_info = conn.execute(text("PRAGMA table_info('faculty')")).fetchall()
-            cols = [c[1] for c in col_info]
-            if 'profile_pic' not in cols:
-                conn.execute(text("ALTER TABLE faculty ADD COLUMN profile_pic TEXT"))
-                logger.info("Added 'profile_pic' column to faculty table.")
-
-            # Check Students table
-            col_info = conn.execute(text("PRAGMA table_info('students')")).fetchall()
-            cols = [c[1] for c in col_info]
-            if 'profile_pic' not in cols:
-                conn.execute(text("ALTER TABLE students ADD COLUMN profile_pic TEXT"))
-                logger.info("Added 'profile_pic' column to students table.")
+            if db_type == 'sqlite':
+                # SQLite specific PRAGMA checks
+                col_info = conn.execute(text("PRAGMA table_info('faculties')")).fetchall()
+                cols = [c[1] for c in col_info]
+                if 'profile_pic' not in cols:
+                    conn.execute(text("ALTER TABLE faculties ADD COLUMN profile_pic TEXT"))
+                
+                col_info = conn.execute(text("PRAGMA table_info('students')")).fetchall()
+                cols = [c[1] for c in col_info]
+                if 'profile_pic' not in cols:
+                    conn.execute(text("ALTER TABLE students ADD COLUMN profile_pic TEXT"))
             
-            # CRITICAL CLEANUP: Fix existing data formatting
-            # This washes data like '21ai31t ' into '21AI31T' so fetching never fails
+            # CRITICAL CLEANUP: Runs on both SQLite and Supabase
             conn.execute(text("UPDATE materials SET course_code = UPPER(TRIM(course_code))"))
             conn.execute(text("UPDATE academic_data SET course_code = UPPER(TRIM(course_code))"))
             
             conn.commit()
-            logger.info("Database cleanup and migration check completed successfully.")
+            logger.info(f"Database cleanup and migration check ({db_type}) completed successfully.")
     except Exception as e:
         logger.error(f"Migration/Cleanup failed: {e}")
 
@@ -76,7 +76,7 @@ app.mount("/static", StaticFiles(directory=UPLOAD_DIR), name="static")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Or your specific localhost:3000
+    allow_origins=["*"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -128,6 +128,65 @@ def login(login_data: schemas.LoginData, db: Session = Depends(get_db)):
         return {"access_token": user.id, "token_type": "bearer", "role": user.role, "user_id": user.id}
     raise HTTPException(status_code=400, detail="Incorrect username or password")
 
+# --- SYLLABUS TOPIC MANAGEMENT (NEW ENDPOINTS) ---
+
+@app.post("/syllabus/topics")
+def save_syllabus_topic(topic: schemas.TopicCreate, db: Session = Depends(get_db)):
+    """Saves faculty syllabus topics to the database."""
+    try:
+        new_topic = models.SyllabusTopic(
+            course_code=topic.course_code.upper().strip(), 
+            section=topic.section, 
+            unit_no=int(topic.unit_no), 
+            topic_name=topic.topic_name
+        )
+        db.add(new_topic)
+        db.commit()
+        db.refresh(new_topic)
+        return new_topic
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error saving topic: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/syllabus/{course_code}/{section}")
+def get_syllabus_topics(
+    course_code: str, 
+    section: str, 
+    unit_no: Optional[int] = None, # Make this optional to avoid 422 errors
+    db: Session = Depends(get_db)
+):
+    """
+    Fetches syllabus topics. 
+    - If unit_no is provided: Returns topics for that specific unit (Faculty view).
+    - If unit_no is missing: Returns all topics for the course (Student view).
+    """
+    # 1. Start the base query filtering by course and section
+    query = db.query(models.SyllabusTopic).filter(
+        models.SyllabusTopic.course_code == course_code.upper().strip(),
+        models.SyllabusTopic.section == section
+    )
+    
+    # 2. If the frontend provided a specific unit_no, add that filter
+    if unit_no is not None:
+        query = query.filter(models.SyllabusTopic.unit_no == unit_no)
+        
+    # 3. Return the results ordered by unit number for a clean UI
+    return query.order_by(models.SyllabusTopic.unit_no.asc()).all()
+
+@app.delete("/syllabus/topics/{topic_id}")
+def delete_syllabus_topic(topic_id: int, db: Session = Depends(get_db)):
+    """Deletes a syllabus topic by ID (Fixes faculty mistakes)."""
+    topic = db.query(models.SyllabusTopic).filter(models.SyllabusTopic.id == topic_id).first()
+    if not topic:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    try:
+        db.delete(topic)
+        db.commit()
+        return {"message": "Topic removed successfully"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
 # --- ADMIN: USER & COURSE MANAGEMENT ---
 
 @app.post("/admin/create-user")
@@ -162,7 +221,7 @@ def admin_create_user(data: AdminUserCreateRequest, db: Session = Depends(get_db
                 enrollment = models.AcademicData(
                     student_roll_no=data.id, 
                     course_id=course.id, 
-                    course_code=course.code, 
+                    course_code=course.code.upper().strip(), 
                     subject=course.title,
                     section=data.section,
                     status="Pursuing"
@@ -223,7 +282,6 @@ async def bulk_upload_users(role: str, file: UploadFile = File(...), db: Session
                 db.add(profile)
                 db.flush()
 
-                # Sync enrollment for ALL courses matching semester and section (including Labs)
                 courses = db.query(models.Course).filter(
                     models.Course.semester == profile.semester,
                     models.Course.section == profile.section
@@ -232,7 +290,7 @@ async def bulk_upload_users(role: str, file: UploadFile = File(...), db: Session
                     db.add(models.AcademicData(
                         student_roll_no=uid, 
                         course_id=c.id, 
-                        course_code=c.code, 
+                        course_code=c.code.upper().strip(), 
                         subject=c.title, 
                         section=c.section,
                         status="Pursuing"
@@ -264,10 +322,6 @@ async def preview_arrears(
     section: str = Form(...),
     db: Session = Depends(get_db)
 ):
-    """
-    Step 1: Analyzes the Excel/CSV file using VH NO.
-    Cross-references VH NO with Students table based on selected Year, Sem, and Sec.
-    """
     if not (file.filename.endswith('.csv') or file.filename.endswith('.xlsx')):
         raise HTTPException(status_code=400, detail="Only CSV or Excel (.xlsx) files are allowed")
 
@@ -278,10 +332,7 @@ async def preview_arrears(
         else:
             df = pd.read_excel(io.BytesIO(contents))
 
-        # Standardize headers
         df.columns = [str(c).strip().upper() for c in df.columns]
-        
-        # Robust VH NO column detection
         vh_col = next((c for c in df.columns if "VH NO" in c or "REG NO" in c or "VHNO" in c), None)
         
         if not vh_col:
@@ -293,7 +344,6 @@ async def preview_arrears(
             if not vh_val or vh_val.lower() == 'nan':
                 continue
 
-            # Validation: Check if VH NO exists in the specific sorted class
             student = db.query(models.Student).filter(
                 models.Student.roll_no == vh_val,
                 models.Student.year == year,
@@ -321,33 +371,22 @@ async def preview_arrears(
 
 @app.post("/admin/upload-arrears")
 async def upload_arrears(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    """
-    Step 2: Processes Arrear data from both .csv and .xlsx files after preview verification.
-    Format: REG NO, NAME OF THE STUDENT, SEM NO, SUBJECT CODE, SUBJECT NAME
-    """
-    # Check for valid extensions
     if not (file.filename.endswith('.csv') or file.filename.endswith('.xlsx')):
         raise HTTPException(status_code=400, detail="Only CSV or Excel (.xlsx) files are allowed")
     
     try:
         contents = await file.read()
-        
-        # Logic to switch between CSV and Excel reading
         if file.filename.endswith('.csv'):
             df = pd.read_csv(io.BytesIO(contents))
         else:
             df = pd.read_excel(io.BytesIO(contents))
         
-        # Clean column names
         df.columns = [str(c).strip().upper() for c in df.columns]
-        
-        # Detect VH NO column
         vh_col = next((c for c in df.columns if "VH NO" in c or "REG NO" in c or "VHNO" in c), None)
 
         success_count = 0
         for _, row in df.iterrows():
             reg_no = str(row.get(vh_col)).strip()
-            # Skip empty rows or header artifacts
             if not reg_no or reg_no.lower() == 'nan' or "REG NO" in reg_no:
                 continue
             
@@ -363,7 +402,7 @@ async def upload_arrears(file: UploadFile = File(...), db: Session = Depends(get
             success_count += 1
             
         db.commit()
-        return {"message": f"Successfully uploaded {success_count} arrear records from {file.filename}."}
+        return {"message": f"Successfully uploaded {success_count} arrear records."}
         
     except Exception as e:
         db.rollback()
@@ -375,12 +414,12 @@ def get_student_arrears(roll_no: str, db: Session = Depends(get_db)):
     """Fetches arrear list for a specific student."""
     return db.query(models.Arrear).filter(models.Arrear.roll_no == roll_no.strip()).all()
 
-# --- OTHER CORE ENDPOINTS (RETAINED) ---
+# --- OTHER CORE ENDPOINTS ---
 
 @app.post("/admin/courses")
 def add_course(course: schemas.CourseCreate, db: Session = Depends(get_db)):
     existing = db.query(models.Course).filter(
-        models.Course.code == course.code,
+        models.Course.code == course.code.upper().strip(),
         models.Course.section == course.section
     ).first()
     
@@ -388,6 +427,7 @@ def add_course(course: schemas.CourseCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail=f"Subject {course.code} already exists for Section {course.section}")
     
     db_course = models.Course(**course.dict())
+    db_course.code = db_course.code.upper().strip()
     db.add(db_course)
     db.commit()
     db.refresh(db_course)
@@ -426,13 +466,13 @@ def delete_course(course_id: int, db: Session = Depends(get_db)):
 def enroll_student(data: AdminEnrollmentRequest, db: Session = Depends(get_db)):
     try:
         student = db.query(models.Student).filter(models.Student.roll_no == data.student_roll_no).first()
-        course = db.query(models.Course).filter(models.Course.code == data.course_code).first() 
+        course = db.query(models.Course).filter(models.Course.code == data.course_code.upper().strip()).first() 
         if not student or not course:
             raise HTTPException(status_code=404, detail="Student or Course not found")
 
         existing = db.query(models.AcademicData).filter(
             models.AcademicData.student_roll_no == data.student_roll_no,
-            models.AcademicData.course_code == data.course_code
+            models.AcademicData.course_code == data.course_code.upper().strip()
         ).first()
         if existing:
             return {"message": "Student already enrolled in this course"}
@@ -440,9 +480,9 @@ def enroll_student(data: AdminEnrollmentRequest, db: Session = Depends(get_db)):
         enrollment = models.AcademicData(
             student_roll_no=data.student_roll_no,
             course_id=course.id,
-            course_code=data.course_code,
+            course_code=data.course_code.upper().strip(),
             subject=course.title,
-            section=student.section, # Explicitly use student's section for Lab accuracy
+            section=student.section, 
             status="Pursuing"
         )
         db.add(enrollment)
@@ -527,7 +567,7 @@ def get_section_marks(course_code: str, section: Optional[str] = "A", db: Sessio
     ).join(
         models.AcademicData, models.Student.roll_no == models.AcademicData.student_roll_no
     ).filter(
-        models.AcademicData.course_code == course_code,
+        models.AcademicData.course_code == course_code.upper().strip(),
         models.AcademicData.section == section
     ).all()
     
@@ -549,7 +589,7 @@ def get_section_marks(course_code: str, section: Optional[str] = "A", db: Sessio
 def sync_marks(data: MarkSyncRequest, db: Session = Depends(get_db)):
     record = db.query(models.AcademicData).filter(
         models.AcademicData.student_roll_no == data.student_roll_no,
-        models.AcademicData.course_code == data.course_code
+        models.AcademicData.course_code == data.course_code.upper().strip()
     ).first()
     
     if not record:
@@ -578,7 +618,6 @@ async def process_marks_excel(
 ):
     try:
         contents = await file.read()
-        # Handle college format header (first 4 rows skip)
         if file.filename.endswith('.csv'):
             df = pd.read_csv(BytesIO(contents), skiprows=4)
         else:
@@ -599,8 +638,6 @@ async def process_marks_excel(
                 continue
             
             raw_mark = str(row[mark_col]).strip().upper()
-            
-            # Robust logic for ABSENT (AB) or empty cells
             if raw_mark in ['AB', 'NAN', '', 'NONE', 'N/A']:
                 mark_val = 0.0
             else:
@@ -627,10 +664,9 @@ def bulk_sync_excel_marks(request: BulkExcelSyncRequest, db: Session = Depends(g
         for entry in request.data:
             record = db.query(models.AcademicData).filter(
                 models.AcademicData.student_roll_no == entry.vh_no,
-                models.AcademicData.course_code == request.course_code
+                models.AcademicData.course_code == request.course_code.upper().strip()
             ).first()
             if record:
-                # Dynamically set attribute based on entity choice (ia1_marks, cia2_marks etc)
                 setattr(record, request.entity, entry.mark)
                 updated_count += 1
         db.commit()
@@ -653,7 +689,6 @@ def get_student_marks(student_id: str, db: Session = Depends(get_db)):
         "cia2_retest": m.cia2_retest or 0, 
         "ia2_marks": m.ia2_marks or 0,
         "subject_attendance": m.subject_attendance or 0,
-        # Display logic: max of (regular or retest) + IA marks
         "total": (max(m.cia1_marks or 0, m.cia1_retest or 0) + 
                   max(m.cia2_marks or 0, m.cia2_retest or 0) + 
                   (m.ia1_marks or 0) + (m.ia2_marks or 0))
@@ -674,7 +709,6 @@ async def upload_material(
 ):
     try:
         file_link = None
-        # Always clean course code before saving to ensure consistency
         clean_course_code = course_code.strip().upper()
         
         if file:
@@ -711,23 +745,17 @@ async def upload_material(
 
 @app.get("/materials/{identifier}")
 def get_course_materials(identifier: str, db: Session = Depends(get_db)):
-    """Smart fetch: searches by ID, Code, or Subject Title to ensure student sees files."""
-    # 1. Search by Numeric Course ID
     if identifier.isdigit():
         return db.query(models.Material).filter(models.Material.course_id == int(identifier)).all()
     
-    # 2. Direct search by Course Code in Materials table
     clean_id = identifier.strip().upper()
     materials = db.query(models.Material).filter(
         (models.Material.course_code == clean_id) | 
         (models.Material.course_code.ilike(f"%{clean_id}%"))
     ).all()
     
-    if materials:
-        return materials
+    if materials: return materials
 
-    # 3. If not found directly, the 'identifier' is likely a Subject Title.
-    # We find the code associated with this title in AcademicData or Course table.
     course_ref = db.query(models.AcademicData).filter(
         (models.AcademicData.subject.ilike(f"%{identifier}%")) | 
         (models.AcademicData.course_code.ilike(f"%{identifier}%"))
@@ -737,7 +765,6 @@ def get_course_materials(identifier: str, db: Session = Depends(get_db)):
         return db.query(models.Material).filter(
             models.Material.course_code == course_ref.course_code
         ).all()
-        
     return []
 
 @app.get("/materials/course/{course_code}")
@@ -757,16 +784,14 @@ def delete_material(material_id: int, db: Session = Depends(get_db)):
 
 @app.post("/announcements")
 def create_announcement(announcement: schemas.AnnouncementCreate, db: Session = Depends(get_db)):
-    """Creates a targeted announcement and standardizes the course code."""
     cleaned_code = "Global"
     if announcement.course_code and announcement.course_code.upper() != "GLOBAL":
-        # Standardization: Removes (Lab) tags so students always find the notices
         cleaned_code = announcement.course_code.upper().replace(' (LAB)', '').replace('(LAB)', '').strip()
 
     db_announcement = models.Announcement(
         title=announcement.title, 
         content=announcement.content, 
-        type=announcement.type, # Should be: 'Global', 'Faculty', or 'Student'
+        type=announcement.type, 
         posted_by=announcement.posted_by, 
         course_code=cleaned_code,
         section=getattr(announcement, 'section', 'All')
@@ -777,37 +802,25 @@ def create_announcement(announcement: schemas.AnnouncementCreate, db: Session = 
     return db_announcement
 
 @app.get("/announcements")
-def get_announcements(
-    audience: Optional[str] = "Global", 
-    student_id: Optional[str] = None, 
-    db: Session = Depends(get_db)
-):
-    """Tiered fetching logic: fetches role-specific notices + global notices."""
+def get_announcements(audience: Optional[str] = "Global", student_id: Optional[str] = None, db: Session = Depends(get_db)):
     query = db.query(models.Announcement)
-    
-    # Logic: Students see Global + Student. Faculty see Global + Faculty.
     if audience == "Student":
         query = query.filter(models.Announcement.type.in_(["Global", "Student"]))
     elif audience == "Faculty":
         query = query.filter(models.Announcement.type.in_(["Global", "Faculty"]))
     else:
-        # Strict filter for Home Page / Public view
         query = query.filter(models.Announcement.type == "Global")
 
-    # Section-specific filtering for students
     if student_id:
         student = db.query(models.Student).filter(models.Student.roll_no == student_id).first()
         if student:
             query = query.filter((models.Announcement.section == "All") | (models.Announcement.section == student.section))
-            
     return query.order_by(models.Announcement.id.desc()).all()
 
 @app.delete("/announcements/{ann_id}")
 def delete_announcement(ann_id: int, db: Session = Depends(get_db)):
-    """Physically removes an announcement (for the Admin Dashboard Registry)."""
     ann = db.query(models.Announcement).filter(models.Announcement.id == ann_id).first()
-    if not ann:
-        raise HTTPException(status_code=404, detail="Announcement not found")
+    if not ann: raise HTTPException(status_code=404)
     db.delete(ann)
     db.commit()
     return {"message": "Announcement removed"}
@@ -817,13 +830,13 @@ def delete_announcement(ann_id: int, db: Session = Depends(get_db)):
 @app.get("/faculty/{staff_no}", response_model=schemas.Faculty)
 def get_faculty(staff_no: str, db: Session = Depends(get_db)):
     faculty = db.query(models.Faculty).filter(models.Faculty.staff_no == staff_no.strip()).first()
-    if not faculty: raise HTTPException(status_code=404, detail="Faculty not found")
+    if not faculty: raise HTTPException(status_code=404)
     return faculty
 
 @app.post("/faculty/{staff_no}/photo")
 async def upload_faculty_photo(staff_no: str, file: UploadFile = File(...), db: Session = Depends(get_db)):
     faculty = db.query(models.Faculty).filter(models.Faculty.staff_no == staff_no.strip()).first()
-    if not faculty: raise HTTPException(status_code=404, detail="Faculty not found")
+    if not faculty: raise HTTPException(status_code=404)
     filename = f"faculty_{staff_no.strip()}_{int(time.time())}_{file.filename}"
     file_path = os.path.join(UPLOAD_DIR, filename)
     with open(file_path, "wb") as buffer: shutil.copyfileobj(file.file, buffer)
@@ -834,13 +847,13 @@ async def upload_faculty_photo(staff_no: str, file: UploadFile = File(...), db: 
 @app.get("/student/{roll_no}", response_model=schemas.Student)
 def get_student(roll_no: str, db: Session = Depends(get_db)):
     student = db.query(models.Student).filter(models.Student.roll_no == roll_no.strip()).first()
-    if not student: raise HTTPException(status_code=404, detail="Student not found")
+    if not student: raise HTTPException(status_code=404)
     return student
 
 @app.post("/student/upload-photo")
 async def upload_student_photo(roll_no: str = Form(...), file: UploadFile = File(...), db: Session = Depends(get_db)):
     student = db.query(models.Student).filter(models.Student.roll_no == roll_no.strip()).first()
-    if not student: raise HTTPException(status_code=404, detail="Student not found")
+    if not student: raise HTTPException(status_code=404)
     filename = f"student_{roll_no.strip()}_{int(time.time())}_{file.filename}"
     file_path = os.path.join(UPLOAD_DIR, filename)
     with open(file_path, "wb") as buffer: shutil.copyfileobj(file.file, buffer)
@@ -877,10 +890,10 @@ def update_student(data: dict, db: Session = Depends(get_db)):
     new_id = data.get('roll_no')
     student = db.query(models.Student).filter(models.Student.roll_no == orig_id).first()
     user = db.query(models.User).filter(models.User.id == orig_id).first()
-    if not student or not user: raise HTTPException(status_code=404, detail="Student not found")
+    if not student or not user: raise HTTPException(status_code=404)
     try:
         if str(orig_id) != str(new_id):
-            if db.query(models.User).filter(models.User.id == new_id).first(): raise HTTPException(status_code=400, detail="ID exists")
+            if db.query(models.User).filter(models.User.id == new_id).first(): raise HTTPException(status_code=400)
             db.query(models.AcademicData).filter(models.AcademicData.student_roll_no == orig_id).update({"student_roll_no": new_id})
             student.roll_no, user.id = new_id, new_id
         student.name, student.year = data.get('name'), int(data.get('year', student.year))
@@ -911,10 +924,10 @@ def update_faculty(data: dict, db: Session = Depends(get_db)):
     new_id = data.get('staff_no') or data.get('id')
     faculty = db.query(models.Faculty).filter(models.Faculty.staff_no == orig_id).first()
     user = db.query(models.User).filter(models.User.id == orig_id).first()
-    if not faculty or not user: raise HTTPException(status_code=404, detail="Faculty not found")
+    if not faculty or not user: raise HTTPException(status_code=404)
     try:
         if str(orig_id) != str(new_id):
-            if db.query(models.User).filter(models.User.id == new_id).first(): raise HTTPException(status_code=400, detail="ID exists")
+            if db.query(models.User).filter(models.User.id == new_id).first(): raise HTTPException(status_code=400)
             db.query(models.Course).filter(models.Course.faculty_id == orig_id).update({"faculty_id": new_id})
             faculty.staff_no, user.id = new_id, new_id
         faculty.name, faculty.designation = data.get('name'), data.get('designation')

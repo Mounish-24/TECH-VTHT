@@ -2,21 +2,24 @@ from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
-# The database file path
-SQLALCHEMY_DATABASE_URL = "sqlite:///./college_app.db"
+# --- 1. DATABASE CONNECTION ---
+# Replace [YOUR-PASSWORD] and [YOUR-PROJECT-REF] with your actual Supabase details
+# You can find this URI in Supabase under Settings > Database
+# Use YOUR real password and YOUR real reference ID
+SQLALCHEMY_DATABASE_URL = "postgresql://postgres:VMOUNISH123456@db.hwxypsgyczekbhfkgakl.supabase.co:5432/postgres"
 
-# Engine configuration for SQLite
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
-)
+# --- 2. ENGINE CONFIGURATION ---
+# We remove SQLite-specific 'check_same_thread' as it's not needed for PostgreSQL
+engine = create_engine(SQLALCHEMY_DATABASE_URL)
 
-# Session factory
+# --- 3. SESSION FACTORY ---
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# Base class for models - DO NOT import this, define it here once.
+# --- 4. BASE CLASS ---
+# This is the base for your "syllabus_topics" model
 Base = declarative_base()
 
-# --- Dependency for API Routers ---
+# --- 5. DATABASE DEPENDENCY ---
 def get_db():
     """
     Creates a new SQLAlchemy session for a single request 

@@ -104,7 +104,7 @@ class Material(Base):
     title = Column(String)
     file_link = Column(String)
     posted_by = Column(String) 
-    created_at = Column(DateTime, default=datetime.datetime.utcnow) # Added for sorting
+    created_at = Column(DateTime, default=datetime.datetime.utcnow) 
 
     course = relationship("Course", back_populates="materials")
 
@@ -156,13 +156,25 @@ class PlacedStudent(Base):
     photo_url = Column(String, nullable=False)
     linkedin_url = Column(String, nullable=True)
 
-# Add this to models.py if not already there
 class Arrear(Base):
     __tablename__ = "arrears"
     id = Column(Integer, primary_key=True, index=True)
-    roll_no = Column(String, index=True)  # This maps to VH NO
+    roll_no = Column(String, index=True)  # maps to VH NO
     name = Column(String)
     batch = Column(String)
     semester = Column(String)
     subject_code = Column(String)
     subject_name = Column(String)
+
+# ==========================================
+# 7. SYLLABUS TOPICS (New Integration)
+# ==========================================
+class SyllabusTopic(Base):
+    __tablename__ = "syllabus_topics"
+
+    id = Column(Integer, primary_key=True, index=True)
+    course_code = Column(String, nullable=False)
+    section = Column(String, nullable=False)
+    unit_no = Column(Integer, nullable=False)
+    topic_name = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)

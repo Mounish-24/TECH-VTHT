@@ -605,7 +605,74 @@ def sync_marks(data: MarkSyncRequest, db: Session = Depends(get_db)):
     
     db.commit()
     return {"message": "Sync successful"}
+# --- SMART PROGRESS CALCULATION ---
 
+# --- SMART PROGRESS CALCULATION (REPLACE THIS SECTION) ---
+
+@app.get("/faculty/course-progress/{course_code}/{section}")
+def get_course_progress(course_code: str, section: str, db: Session = Depends(get_db)):
+    clean_code = course_code.upper().strip()
+    
+    # 1. Fetch Course and Faculty details
+    course_info = db.query(models.Course).filter(
+        models.Course.code == clean_code,
+        models.Course.section == section
+    ).first()
+
+    faculty_name = "Not Assigned"
+    subject_title = "N/A"
+    
+    if course_info:
+        subject_title = course_info.title
+        faculty = db.query(models.Faculty).filter(models.Faculty.staff_no == course_info.faculty_id).first()
+        if faculty:
+            faculty_name = faculty.name
+
+    # 2. Fetch all materials (Actual uploaded files)
+    materials = db.query(models.Material).filter(models.Material.course_code == clean_code).all()
+    
+    # 3. Define REQUIRED topics per unit
+    # Change this number to whatever your HOD requires (e.g., 5 topics per unit)
+    REQUIRED_PER_UNIT = 5 
+
+    unit_status = []
+    for i in range(1, 6):
+        # FIX: Instead of counting topics in a list, count ACTUAL LECTURE NOTE FILES uploaded for this unit
+        # This assumes your file title contains "Unit 1", "Unit 2", etc. or you have a unit column in Material
+        count_files_uploaded = len([
+            m for m in materials 
+            if m.type == "Lecture Notes" and f"Unit {i}" in (m.title or "")
+        ])
+        
+        # Check for other resources
+        qb_exists = any(m.type == "Question Bank" and f"Unit {i}" in (m.title or "") for m in materials)
+        video_exists = any(m.type == "YouTube Video" and f"Unit {i}" in (m.title or "") for m in materials)
+
+        # LOGIC: The "Tick" only comes if the number of FILES matches the REQUIREMENT
+        is_unit_complete = count_files_uploaded >= REQUIRED_PER_UNIT
+
+        unit_status.append({
+            "unit": i, 
+            "topic_count": count_files_uploaded, # This is now the FILE count, not just topic name count
+            "required_count": REQUIRED_PER_UNIT,
+            "completed": is_unit_complete,
+            "qb_done": qb_exists,
+            "video_done": video_exists
+        })
+
+    # 4. Return EVERYTHING
+    return {
+        "course_details": {
+            "staff_name": faculty_name,
+            "subject_id": clean_code,
+            "subject_name": subject_title,
+            "section": section
+        },
+        "units": unit_status,
+        "qb_completed": all(u["qb_done"] for u in unit_status),
+        "videos_completed": all(u["video_done"] for u in unit_status),
+        "assignments_count": len([m for m in materials if m.type == "Assignment"])
+    }
 # --- EXCEL AUTOMATION ENDPOINTS ---
 
 @app.post("/marks/process-excel")
@@ -959,7 +1026,20 @@ def get_overall_toppers(year: Optional[int] = None, db: Session = Depends(get_db
 @app.get("/admin/toppers/classwise")
 def get_classwise_toppers(year: int, section: str, db: Session = Depends(get_db)):
     return db.query(models.Student).filter(models.Student.year == year, models.Student.section == section).order_by(models.Student.cgpa.desc()).all()
-
+@app.get("/admin/faculty-performance")
+def get_faculty_performance(db: Session = Depends(get_db)):
+    """Summary of all faculty upload activities for the Admin."""
+    faculties = db.query(models.Faculty).all()
+    report = []
+    for f in faculties:
+        count = db.query(models.Material).filter(models.Material.posted_by == f.staff_no).count()
+        report.append({
+            "name": f.name,
+            "staff_no": f.staff_no,
+            "total_uploads": count,
+            "last_active": "Recent" if count > 0 else "Never"
+        })
+    return report
 @app.get("/debug/materials")
 def debug_all_materials(db: Session = Depends(get_db)):
     materials = db.query(models.Material).all()

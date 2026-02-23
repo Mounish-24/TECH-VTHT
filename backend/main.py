@@ -4,27 +4,31 @@ import time
 import csv
 import io
 import logging
+import traceback
 import pandas as pd
 from io import BytesIO
 from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Form, Request
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from pydantic import BaseModel
-import traceback
 
-from .routers import placements
-from .routers import advisors
+# --- 1. SETUP & IMPORTS ---
 from . import models, schemas
 from .database import SessionLocal, engine, get_db
+from .routers import placements, advisors
 
-# --- 1. SETUP STORAGE ---
+# Create base directories immediately to prevent "Directory does not exist" errors
 UPLOAD_DIR = "uploaded_files"
-if not os.path.exists(UPLOAD_DIR):
-    os.makedirs(UPLOAD_DIR)
-    os.makedirs("uploads/advisor_docs", exist_ok=True)
+ADVISOR_DIR = "uploads/advisor_docs"
+
+for folder in [UPLOAD_DIR, "uploads", ADVISOR_DIR]:
+    if not os.path.exists(folder):
+        os.makedirs(folder, exist_ok=True)
+
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -41,18 +45,24 @@ def ensure_profile_columns():
         
         with engine.connect() as conn:
             if db_type == 'sqlite':
-                # SQLite specific PRAGMA checks
-                col_info = conn.execute(text("PRAGMA table_info('faculties')")).fetchall()
-                cols = [c[1] for c in col_info]
-                if 'profile_pic' not in cols:
-                    conn.execute(text("ALTER TABLE faculties ADD COLUMN profile_pic TEXT"))
-                
+                # Safely check and add columns to Faculty table
+                col_info = conn.execute(text("PRAGMA table_info('faculty')")).fetchall()
+                if col_info: # Only if table exists
+                    cols = [c[1] for c in col_info]
+                    if 'profile_pic' not in cols:
+                        conn.execute(text("ALTER TABLE faculty ADD COLUMN profile_pic TEXT"))
+                        logger.info("Added 'profile_pic' column to faculty table.")
+
+                # Safely check and add columns to Students table
                 col_info = conn.execute(text("PRAGMA table_info('students')")).fetchall()
-                cols = [c[1] for c in col_info]
-                if 'profile_pic' not in cols:
-                    conn.execute(text("ALTER TABLE students ADD COLUMN profile_pic TEXT"))
+                if col_info:
+                    cols = [c[1] for c in col_info]
+                    if 'profile_pic' not in cols:
+                        conn.execute(text("ALTER TABLE students ADD COLUMN profile_pic TEXT"))
+                        logger.info("Added 'profile_pic' column to students table.")
             
-            # CRITICAL CLEANUP: Runs on both SQLite and Supabase
+            # CRITICAL CLEANUP: Fix existing data formatting (Runs on both SQLite and Postgres/Supabase)
+            # This ensures '21ai31t ' becomes '21AI31T' so fetches never fail
             conn.execute(text("UPDATE materials SET course_code = UPPER(TRIM(course_code))"))
             conn.execute(text("UPDATE academic_data SET course_code = UPPER(TRIM(course_code))"))
             
@@ -61,19 +71,13 @@ def ensure_profile_columns():
     except Exception as e:
         logger.error(f"Migration/Cleanup failed: {e}")
 
+# Run migration check on startup
 ensure_profile_columns()
 
 # --- 2. INITIALIZE THE APP ---
-app = FastAPI()
+app = FastAPI(title="College Management System API")
 
-app.include_router(placements.router)
-app.include_router(advisors.router)
-
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
-
-# --- 3. MOUNT STATIC FILES ---
-app.mount("/static", StaticFiles(directory=UPLOAD_DIR), name="static")
-
+# --- MIDDLEWARE & SECURITY ---
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], 
@@ -81,6 +85,28 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Global Exception Handler to catch 500 errors and print them to terminal
+@app.middleware("http")
+async def catch_exceptions_middleware(request: Request, call_next):
+    try:
+        return await call_next(request)
+    except Exception as exc:
+        logger.error("--- CRITICAL INTERNAL SERVER ERROR ---")
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Internal Server Error: {str(exc)}", "trace": traceback.format_summary(traceback.extract_tb(exc.__traceback__))[0]}
+        )
+
+# --- MOUNT STATIC FILES ---
+# Mounting /uploads for Advisor Docs and /static for General Uploads
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+app.mount("/static", StaticFiles(directory=UPLOAD_DIR), name="static")
+
+# --- INCLUDE ROUTERS ---
+app.include_router(placements.router)
+app.include_router(advisors.router)
 
 # --- PYDANTIC MODELS ---
 class MarkSyncRequest(BaseModel):
@@ -128,8 +154,7 @@ def login(login_data: schemas.LoginData, db: Session = Depends(get_db)):
         return {"access_token": user.id, "token_type": "bearer", "role": user.role, "user_id": user.id}
     raise HTTPException(status_code=400, detail="Incorrect username or password")
 
-# --- SYLLABUS TOPIC MANAGEMENT (NEW ENDPOINTS) ---
-
+# --- SYLLABUS TOPIC MANAGEMENT ---
 @app.post("/syllabus/topics")
 def save_syllabus_topic(topic: schemas.TopicCreate, db: Session = Depends(get_db)):
     """Saves faculty syllabus topics to the database."""
@@ -153,25 +178,17 @@ def save_syllabus_topic(topic: schemas.TopicCreate, db: Session = Depends(get_db
 def get_syllabus_topics(
     course_code: str, 
     section: str, 
-    unit_no: Optional[int] = None, # Make this optional to avoid 422 errors
+    unit_no: Optional[int] = None,
     db: Session = Depends(get_db)
 ):
-    """
-    Fetches syllabus topics. 
-    - If unit_no is provided: Returns topics for that specific unit (Faculty view).
-    - If unit_no is missing: Returns all topics for the course (Student view).
-    """
-    # 1. Start the base query filtering by course and section
+    """Fetches syllabus topics."""
     query = db.query(models.SyllabusTopic).filter(
         models.SyllabusTopic.course_code == course_code.upper().strip(),
         models.SyllabusTopic.section == section
     )
-    
-    # 2. If the frontend provided a specific unit_no, add that filter
     if unit_no is not None:
         query = query.filter(models.SyllabusTopic.unit_no == unit_no)
         
-    # 3. Return the results ordered by unit number for a clean UI
     return query.order_by(models.SyllabusTopic.unit_no.asc()).all()
 
 @app.delete("/syllabus/topics/{topic_id}")
@@ -187,6 +204,7 @@ def delete_syllabus_topic(topic_id: int, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
 # --- ADMIN: USER & COURSE MANAGEMENT ---
 
 @app.post("/admin/create-user")
@@ -244,7 +262,6 @@ def admin_create_user(data: AdminUserCreateRequest, db: Session = Depends(get_db
         logger.error(f"Creation error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- BULK UPLOAD FROM CSV ---
 @app.post("/admin/bulk-upload/{role}")
 async def bulk_upload_users(role: str, file: UploadFile = File(...), db: Session = Depends(get_db)):
     if not file.filename.endswith('.csv'):
@@ -312,8 +329,83 @@ async def bulk_upload_users(role: str, file: UploadFile = File(...), db: Session
     db.commit()
     return {"message": f"Successfully uploaded {success_count} users", "errors": errors}
 
-# --- ARREAR MANAGEMENT SYSTEM (PREVIEW & UPLOAD) ---
+@app.post("/admin/courses")
+def add_course(course: schemas.CourseCreate, db: Session = Depends(get_db)):
+    existing = db.query(models.Course).filter(
+        models.Course.code == course.code.upper().strip(),
+        models.Course.section == course.section
+    ).first()
+    
+    if existing:
+        raise HTTPException(status_code=400, detail=f"Subject {course.code} already exists for Section {course.section}")
+    
+    db_course = models.Course(**course.dict())
+    db_course.code = db_course.code.upper().strip()
+    db.add(db_course)
+    db.commit()
+    db.refresh(db_course)
 
+    existing_students = db.query(models.Student).filter(
+        models.Student.semester == course.semester,
+        models.Student.section == course.section
+    ).all()
+
+    for student in existing_students:
+        enrollment = models.AcademicData(
+            student_roll_no=student.roll_no,
+            course_id=db_course.id,
+            course_code=db_course.code,
+            subject=db_course.title,
+            section=db_course.section,
+            status="Pursuing"
+        )
+        db.add(enrollment)
+    
+    db.commit()
+    return db_course
+
+@app.delete("/admin/courses/{course_id}")
+def delete_course(course_id: int, db: Session = Depends(get_db)):
+    course = db.query(models.Course).filter(models.Course.id == course_id).first()
+    if not course:
+        raise HTTPException(status_code=404, detail="Course not found")
+    
+    db.query(models.AcademicData).filter(models.AcademicData.course_id == course.id).delete()
+    db.delete(course)
+    db.commit()
+    return {"message": "Course removed"}
+
+@app.post("/admin/enroll")
+def enroll_student(data: AdminEnrollmentRequest, db: Session = Depends(get_db)):
+    try:
+        student = db.query(models.Student).filter(models.Student.roll_no == data.student_roll_no).first()
+        course = db.query(models.Course).filter(models.Course.code == data.course_code.upper().strip()).first() 
+        if not student or not course:
+            raise HTTPException(status_code=404, detail="Student or Course not found")
+
+        existing = db.query(models.AcademicData).filter(
+            models.AcademicData.student_roll_no == data.student_roll_no,
+            models.AcademicData.course_code == data.course_code.upper().strip()
+        ).first()
+        if existing:
+            return {"message": "Student already enrolled in this course"}
+
+        enrollment = models.AcademicData(
+            student_roll_no=data.student_roll_no,
+            course_id=course.id,
+            course_code=data.course_code.upper().strip(),
+            subject=course.title,
+            section=student.section, 
+            status="Pursuing"
+        )
+        db.add(enrollment)
+        db.commit()
+        return {"message": "Student enrolled successfully"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- ARREAR MANAGEMENT SYSTEM ---
 @app.post("/admin/arrears/preview")
 async def preview_arrears(
     file: UploadFile = File(...),
@@ -413,84 +505,6 @@ async def upload_arrears(file: UploadFile = File(...), db: Session = Depends(get
 def get_student_arrears(roll_no: str, db: Session = Depends(get_db)):
     """Fetches arrear list for a specific student."""
     return db.query(models.Arrear).filter(models.Arrear.roll_no == roll_no.strip()).all()
-
-# --- OTHER CORE ENDPOINTS ---
-
-@app.post("/admin/courses")
-def add_course(course: schemas.CourseCreate, db: Session = Depends(get_db)):
-    existing = db.query(models.Course).filter(
-        models.Course.code == course.code.upper().strip(),
-        models.Course.section == course.section
-    ).first()
-    
-    if existing:
-        raise HTTPException(status_code=400, detail=f"Subject {course.code} already exists for Section {course.section}")
-    
-    db_course = models.Course(**course.dict())
-    db_course.code = db_course.code.upper().strip()
-    db.add(db_course)
-    db.commit()
-    db.refresh(db_course)
-
-    existing_students = db.query(models.Student).filter(
-        models.Student.semester == course.semester,
-        models.Student.section == course.section
-    ).all()
-
-    for student in existing_students:
-        enrollment = models.AcademicData(
-            student_roll_no=student.roll_no,
-            course_id=db_course.id,
-            course_code=db_course.code,
-            subject=db_course.title,
-            section=db_course.section,
-            status="Pursuing"
-        )
-        db.add(enrollment)
-    
-    db.commit()
-    return db_course
-
-@app.delete("/admin/courses/{course_id}")
-def delete_course(course_id: int, db: Session = Depends(get_db)):
-    course = db.query(models.Course).filter(models.Course.id == course_id).first()
-    if not course:
-        raise HTTPException(status_code=404, detail="Course not found")
-    
-    db.query(models.AcademicData).filter(models.AcademicData.course_id == course.id).delete()
-    db.delete(course)
-    db.commit()
-    return {"message": "Course removed"}
-
-@app.post("/admin/enroll")
-def enroll_student(data: AdminEnrollmentRequest, db: Session = Depends(get_db)):
-    try:
-        student = db.query(models.Student).filter(models.Student.roll_no == data.student_roll_no).first()
-        course = db.query(models.Course).filter(models.Course.code == data.course_code.upper().strip()).first() 
-        if not student or not course:
-            raise HTTPException(status_code=404, detail="Student or Course not found")
-
-        existing = db.query(models.AcademicData).filter(
-            models.AcademicData.student_roll_no == data.student_roll_no,
-            models.AcademicData.course_code == data.course_code.upper().strip()
-        ).first()
-        if existing:
-            return {"message": "Student already enrolled in this course"}
-
-        enrollment = models.AcademicData(
-            student_roll_no=data.student_roll_no,
-            course_id=course.id,
-            course_code=data.course_code.upper().strip(),
-            subject=course.title,
-            section=student.section, 
-            status="Pursuing"
-        )
-        db.add(enrollment)
-        db.commit()
-        return {"message": "Student enrolled successfully"}
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
 
 # --- PLACEMENT MANAGEMENT ---
 
@@ -605,75 +619,6 @@ def sync_marks(data: MarkSyncRequest, db: Session = Depends(get_db)):
     
     db.commit()
     return {"message": "Sync successful"}
-# --- SMART PROGRESS CALCULATION ---
-
-# --- SMART PROGRESS CALCULATION (REPLACE THIS SECTION) ---
-
-@app.get("/faculty/course-progress/{course_code}/{section}")
-def get_course_progress(course_code: str, section: str, db: Session = Depends(get_db)):
-    clean_code = course_code.upper().strip()
-    
-    # 1. Fetch Course and Faculty details
-    course_info = db.query(models.Course).filter(
-        models.Course.code == clean_code,
-        models.Course.section == section
-    ).first()
-
-    faculty_name = "Not Assigned"
-    subject_title = "N/A"
-    
-    if course_info:
-        subject_title = course_info.title
-        faculty = db.query(models.Faculty).filter(models.Faculty.staff_no == course_info.faculty_id).first()
-        if faculty:
-            faculty_name = faculty.name
-
-    # 2. Fetch all materials (Actual uploaded files)
-    materials = db.query(models.Material).filter(models.Material.course_code == clean_code).all()
-    
-    # 3. Define REQUIRED topics per unit
-    # Change this number to whatever your HOD requires (e.g., 5 topics per unit)
-    REQUIRED_PER_UNIT = 5 
-
-    unit_status = []
-    for i in range(1, 6):
-        # FIX: Instead of counting topics in a list, count ACTUAL LECTURE NOTE FILES uploaded for this unit
-        # This assumes your file title contains "Unit 1", "Unit 2", etc. or you have a unit column in Material
-        count_files_uploaded = len([
-            m for m in materials 
-            if m.type == "Lecture Notes" and f"Unit {i}" in (m.title or "")
-        ])
-        
-        # Check for other resources
-        qb_exists = any(m.type == "Question Bank" and f"Unit {i}" in (m.title or "") for m in materials)
-        video_exists = any(m.type == "YouTube Video" and f"Unit {i}" in (m.title or "") for m in materials)
-
-        # LOGIC: The "Tick" only comes if the number of FILES matches the REQUIREMENT
-        is_unit_complete = count_files_uploaded >= REQUIRED_PER_UNIT
-
-        unit_status.append({
-            "unit": i, 
-            "topic_count": count_files_uploaded, # This is now the FILE count, not just topic name count
-            "required_count": REQUIRED_PER_UNIT,
-            "completed": is_unit_complete,
-            "qb_done": qb_exists,
-            "video_done": video_exists
-        })
-
-    # 4. Return EVERYTHING
-    return {
-        "course_details": {
-            "staff_name": faculty_name,
-            "subject_id": clean_code,
-            "subject_name": subject_title,
-            "section": section
-        },
-        "units": unit_status,
-        "qb_completed": all(u["qb_done"] for u in unit_status),
-        "videos_completed": all(u["video_done"] for u in unit_status),
-        "assignments_count": len([m for m in materials if m.type == "Assignment"])
-    }
-# --- EXCEL AUTOMATION ENDPOINTS ---
 
 @app.post("/marks/process-excel")
 async def process_marks_excel(
@@ -741,6 +686,70 @@ def bulk_sync_excel_marks(request: BulkExcelSyncRequest, db: Session = Depends(g
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
+# --- SMART PROGRESS CALCULATION ---
+@app.get("/faculty/course-progress/{course_code}/{section}")
+def get_course_progress(course_code: str, section: str, db: Session = Depends(get_db)):
+    clean_code = course_code.upper().strip()
+    
+    # 1. Fetch Course and Faculty details
+    course_info = db.query(models.Course).filter(
+        models.Course.code == clean_code,
+        models.Course.section == section
+    ).first()
+
+    faculty_name = "Not Assigned"
+    subject_title = "N/A"
+    
+    if course_info:
+        subject_title = course_info.title
+        faculty = db.query(models.Faculty).filter(models.Faculty.staff_no == course_info.faculty_id).first()
+        if faculty:
+            faculty_name = faculty.name
+
+    # 2. Fetch all materials (Actual uploaded files)
+    materials = db.query(models.Material).filter(models.Material.course_code == clean_code).all()
+    
+    # 3. Define REQUIRED topics per unit
+    # Change this number to whatever your HOD requires (e.g., 5 topics per unit)
+    REQUIRED_PER_UNIT = 5 
+
+    unit_status = []
+    for i in range(1, 6):
+        # Count ACTUAL LECTURE NOTE FILES uploaded for this unit
+        count_files_uploaded = len([
+            m for m in materials 
+            if m.type == "Lecture Notes" and f"Unit {i}" in (m.title or "")
+        ])
+        
+        # Check for other resources
+        qb_exists = any(m.type == "Question Bank" and f"Unit {i}" in (m.title or "") for m in materials)
+        video_exists = any(m.type == "YouTube Video" and f"Unit {i}" in (m.title or "") for m in materials)
+
+        is_unit_complete = count_files_uploaded >= REQUIRED_PER_UNIT
+
+        unit_status.append({
+            "unit": i, 
+            "topic_count": count_files_uploaded,
+            "required_count": REQUIRED_PER_UNIT,
+            "completed": is_unit_complete,
+            "qb_done": qb_exists,
+            "video_done": video_exists
+        })
+
+    # 4. Return EVERYTHING
+    return {
+        "course_details": {
+            "staff_name": faculty_name,
+            "subject_id": clean_code,
+            "subject_name": subject_title,
+            "section": section
+        },
+        "units": unit_status,
+        "qb_completed": all(u["qb_done"] for u in unit_status),
+        "videos_completed": all(u["video_done"] for u in unit_status),
+        "assignments_count": len([m for m in materials if m.type == "Assignment"])
+    }
 
 # --- STUDENT: ACADEMIC PORTAL ---
 @app.get("/marks/cia")
@@ -847,8 +856,6 @@ def delete_material(material_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"message": "Deleted"}
 
-# --- TARGETED ANNOUNCEMENT SYSTEM ---
-
 @app.post("/announcements")
 def create_announcement(announcement: schemas.AnnouncementCreate, db: Session = Depends(get_db)):
     cleaned_code = "Global"
@@ -858,7 +865,7 @@ def create_announcement(announcement: schemas.AnnouncementCreate, db: Session = 
     db_announcement = models.Announcement(
         title=announcement.title, 
         content=announcement.content, 
-        type=announcement.type, 
+        type=announcement.type,
         posted_by=announcement.posted_by, 
         course_code=cleaned_code,
         section=getattr(announcement, 'section', 'All')
@@ -869,10 +876,11 @@ def create_announcement(announcement: schemas.AnnouncementCreate, db: Session = 
     return db_announcement
 
 @app.get("/announcements")
-def get_announcements(audience: Optional[str] = "Global", student_id: Optional[str] = None, db: Session = Depends(get_db)):
+def get_announcements(audience: Optional[str] = "Global", type: Optional[str] = None, section: Optional[str] = None, student_id: Optional[str] = None, db: Session = Depends(get_db)):
     query = db.query(models.Announcement)
+    
     if audience == "Student":
-        query = query.filter(models.Announcement.type.in_(["Global", "Student"]))
+        query = query.filter(models.Announcement.type.in_(["Global", "Student", "Subject", "Placement"]))
     elif audience == "Faculty":
         query = query.filter(models.Announcement.type.in_(["Global", "Faculty"]))
     else:
@@ -882,28 +890,35 @@ def get_announcements(audience: Optional[str] = "Global", student_id: Optional[s
         student = db.query(models.Student).filter(models.Student.roll_no == student_id).first()
         if student:
             query = query.filter((models.Announcement.section == "All") | (models.Announcement.section == student.section))
+            
+    if type: 
+        query = query.filter(models.Announcement.type == type)
+    if section:
+        query = query.filter(models.Announcement.section == section)
+        
     return query.order_by(models.Announcement.id.desc()).all()
 
-@app.delete("/announcements/{ann_id}")
-def delete_announcement(ann_id: int, db: Session = Depends(get_db)):
-    ann = db.query(models.Announcement).filter(models.Announcement.id == ann_id).first()
-    if not ann: raise HTTPException(status_code=404)
+@app.delete("/announcements/{announcement_id}")
+def delete_announcement(announcement_id: int, db: Session = Depends(get_db)):
+    ann = db.query(models.Announcement).filter(models.Announcement.id == announcement_id).first()
+    if not ann:
+        raise HTTPException(status_code=404, detail="Announcement not found")
     db.delete(ann)
     db.commit()
-    return {"message": "Announcement removed"}
+    return {"message": "Announcement deleted successfully"}
 
 # --- PROFILES & PHOTO UPLOADS ---
 
 @app.get("/faculty/{staff_no}", response_model=schemas.Faculty)
 def get_faculty(staff_no: str, db: Session = Depends(get_db)):
     faculty = db.query(models.Faculty).filter(models.Faculty.staff_no == staff_no.strip()).first()
-    if not faculty: raise HTTPException(status_code=404)
+    if not faculty: raise HTTPException(status_code=404, detail="Faculty not found")
     return faculty
 
 @app.post("/faculty/{staff_no}/photo")
 async def upload_faculty_photo(staff_no: str, file: UploadFile = File(...), db: Session = Depends(get_db)):
     faculty = db.query(models.Faculty).filter(models.Faculty.staff_no == staff_no.strip()).first()
-    if not faculty: raise HTTPException(status_code=404)
+    if not faculty: raise HTTPException(status_code=404, detail="Faculty not found")
     filename = f"faculty_{staff_no.strip()}_{int(time.time())}_{file.filename}"
     file_path = os.path.join(UPLOAD_DIR, filename)
     with open(file_path, "wb") as buffer: shutil.copyfileobj(file.file, buffer)
@@ -914,13 +929,13 @@ async def upload_faculty_photo(staff_no: str, file: UploadFile = File(...), db: 
 @app.get("/student/{roll_no}", response_model=schemas.Student)
 def get_student(roll_no: str, db: Session = Depends(get_db)):
     student = db.query(models.Student).filter(models.Student.roll_no == roll_no.strip()).first()
-    if not student: raise HTTPException(status_code=404)
+    if not student: raise HTTPException(status_code=404, detail="Student not found")
     return student
 
 @app.post("/student/upload-photo")
 async def upload_student_photo(roll_no: str = Form(...), file: UploadFile = File(...), db: Session = Depends(get_db)):
     student = db.query(models.Student).filter(models.Student.roll_no == roll_no.strip()).first()
-    if not student: raise HTTPException(status_code=404)
+    if not student: raise HTTPException(status_code=404, detail="Student not found")
     filename = f"student_{roll_no.strip()}_{int(time.time())}_{file.filename}"
     file_path = os.path.join(UPLOAD_DIR, filename)
     with open(file_path, "wb") as buffer: shutil.copyfileobj(file.file, buffer)
@@ -957,10 +972,10 @@ def update_student(data: dict, db: Session = Depends(get_db)):
     new_id = data.get('roll_no')
     student = db.query(models.Student).filter(models.Student.roll_no == orig_id).first()
     user = db.query(models.User).filter(models.User.id == orig_id).first()
-    if not student or not user: raise HTTPException(status_code=404)
+    if not student or not user: raise HTTPException(status_code=404, detail="Student not found")
     try:
         if str(orig_id) != str(new_id):
-            if db.query(models.User).filter(models.User.id == new_id).first(): raise HTTPException(status_code=400)
+            if db.query(models.User).filter(models.User.id == new_id).first(): raise HTTPException(status_code=400, detail="ID exists")
             db.query(models.AcademicData).filter(models.AcademicData.student_roll_no == orig_id).update({"student_roll_no": new_id})
             student.roll_no, user.id = new_id, new_id
         student.name, student.year = data.get('name'), int(data.get('year', student.year))
@@ -991,10 +1006,10 @@ def update_faculty(data: dict, db: Session = Depends(get_db)):
     new_id = data.get('staff_no') or data.get('id')
     faculty = db.query(models.Faculty).filter(models.Faculty.staff_no == orig_id).first()
     user = db.query(models.User).filter(models.User.id == orig_id).first()
-    if not faculty or not user: raise HTTPException(status_code=404)
+    if not faculty or not user: raise HTTPException(status_code=404, detail="Faculty not found")
     try:
         if str(orig_id) != str(new_id):
-            if db.query(models.User).filter(models.User.id == new_id).first(): raise HTTPException(status_code=400)
+            if db.query(models.User).filter(models.User.id == new_id).first(): raise HTTPException(status_code=400, detail="ID exists")
             db.query(models.Course).filter(models.Course.faculty_id == orig_id).update({"faculty_id": new_id})
             faculty.staff_no, user.id = new_id, new_id
         faculty.name, faculty.designation = data.get('name'), data.get('designation')
@@ -1026,6 +1041,7 @@ def get_overall_toppers(year: Optional[int] = None, db: Session = Depends(get_db
 @app.get("/admin/toppers/classwise")
 def get_classwise_toppers(year: int, section: str, db: Session = Depends(get_db)):
     return db.query(models.Student).filter(models.Student.year == year, models.Student.section == section).order_by(models.Student.cgpa.desc()).all()
+
 @app.get("/admin/faculty-performance")
 def get_faculty_performance(db: Session = Depends(get_db)):
     """Summary of all faculty upload activities for the Admin."""
@@ -1040,6 +1056,7 @@ def get_faculty_performance(db: Session = Depends(get_db)):
             "last_active": "Recent" if count > 0 else "Never"
         })
     return report
+
 @app.get("/debug/materials")
 def debug_all_materials(db: Session = Depends(get_db)):
     materials = db.query(models.Material).all()

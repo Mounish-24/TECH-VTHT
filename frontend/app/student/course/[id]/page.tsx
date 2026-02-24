@@ -24,7 +24,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
     const [marks, setMarks] = useState<any>(null);
     const [loading, setLoading] = useState(true);
 
-    const fetchCourseContent = async () => {
+  const fetchCourseContent = async () => {
         const userId = localStorage.getItem('user_id');
         if (!userId || !courseId) return;
 
@@ -36,38 +36,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
 
             const cleanId = courseId.toString().trim().toUpperCase();
 
-            // 2. Fetch Materials
-            let matRes;
-            try {
-                matRes = await axios.get(`${API_URL}/materials/${encodeURIComponent(cleanId)}`);
-                if (!matRes.data || matRes.data.length === 0) {
-                    matRes = await axios.get(`${API_URL}/materials/course/${encodeURIComponent(cleanId)}`);
-                }
-            } catch (err) {
-                matRes = await axios.get(`${API_URL}/materials/course/${encodeURIComponent(cleanId)}`);
-            }
-            const theoryMaterials = (matRes.data || []).filter((m: any) =>
-                m.type !== 'Lab Manual' && m.type !== 'Lab'
-            );
-            setMaterials(theoryMaterials);
-
-            // 3. NEW: Fetch Syllabus Topics (For Unit-wise headers)
-            // This pulls the topics saved by faculty via the backend we built
-            // 3. Fetch Syllabus Topics (For Unit-wise headers)
-            const topicsRes = await axios.get(
-                `${API_URL}/syllabus/${encodeURIComponent(cleanId)}/${encodeURIComponent(studentData.section)}`
-            );
-            setSyllabusTopics(topicsRes.data || []);
-            // 4. Fetch Announcements
-            const annRes = await axios.get(`${API_URL}/announcements?student_id=${userId}`);
-            const specificNotices = (annRes.data || []).filter((a: any) =>
-                a.course_code?.trim().toUpperCase() === cleanId ||
-                a.course_code === "Global" ||
-                a.title.toUpperCase().includes(cleanId)
-            );
-            setAnnouncements(specificNotices);
-
-            // 5. Fetch Marks
+            // 2. 🌟 CRITICAL FIX: Fetch Marks FIRST to translate Subject Name to Course Code
             const marksRes = await axios.get(`${API_URL}/marks/cia?student_id=${userId}`);
             const specificMark = (marksRes.data || []).find((m: any) =>
                 m.course_code?.trim().toUpperCase() === cleanId ||
@@ -75,13 +44,46 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
             );
             setMarks(specificMark);
 
+            // This grabs the REAL code (e.g., "21AD32A") instead of "ARTIFICIAL INTELLIGENCE"
+            const actualCourseCode = specificMark ? specificMark.course_code.trim().toUpperCase() : cleanId;
+
+            // 3. Fetch Announcements using the REAL course code
+            const annRes = await axios.get(`${API_URL}/announcements?audience=Student&student_id=${userId}`);
+            const specificNotices = (annRes.data || []).filter((a: any) =>
+                a.type === 'Subject' && (
+                    a.course_code?.trim().toUpperCase() === actualCourseCode || 
+                    a.course_code?.trim().toUpperCase() === cleanId
+                )
+            );
+            setAnnouncements(specificNotices);
+
+            // 4. Fetch Materials using the REAL course code
+            let matRes;
+            try {
+                matRes = await axios.get(`${API_URL}/materials/${encodeURIComponent(actualCourseCode)}`);
+                if (!matRes.data || matRes.data.length === 0) {
+                    matRes = await axios.get(`${API_URL}/materials/course/${encodeURIComponent(actualCourseCode)}`);
+                }
+            } catch (err) {
+                matRes = await axios.get(`${API_URL}/materials/course/${encodeURIComponent(actualCourseCode)}`);
+            }
+            const theoryMaterials = (matRes.data || []).filter((m: any) =>
+                m.type !== 'Lab Manual' && m.type !== 'Lab'
+            );
+            setMaterials(theoryMaterials);
+
+            // 5. Fetch Syllabus Topics using the REAL course code
+            const topicsRes = await axios.get(
+                `${API_URL}/syllabus/${encodeURIComponent(actualCourseCode)}/${encodeURIComponent(studentData.section)}`
+            );
+            setSyllabusTopics(topicsRes.data || []);
+
         } catch (error) {
             console.error("Sync error:", error);
         } finally {
             setLoading(false);
         }
     };
-
     useEffect(() => {
         fetchCourseContent();
     }, [courseId]);

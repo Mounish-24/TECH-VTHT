@@ -189,9 +189,9 @@ export default function StudentDashboard() {
                         {/* Announcements Section (Targeted) */}
                         <div className="bg-white p-6 rounded-lg shadow-md border-l-4 border-blue-900">
                             <h2 className="text-xl font-bold mb-4 text-blue-900 flex items-center gap-2"><Bell className="text-orange-500" /> Recent Updates</h2>
-                            {announcements.filter(a => a.type !== 'Placement' && a.type !== 'Lab').length > 0 ? (
+                            {announcements.filter(a => a.type !== 'Placement' && a.type !== 'Lab' && a.type !== 'Subject').length > 0 ? (
                                 <ul className="space-y-3">
-                                    {announcements.filter(a => a.type !== 'Placement' && a.type !== 'Lab').map((ann: any) => (
+                                    {announcements.filter(a => a.type !== 'Placement' && a.type !== 'Lab' && a.type !== 'Subject').map((ann: any) => (
                                         <li key={ann.id} className="bg-blue-50/50 p-4 rounded border-l-2 border-blue-200">
                                             <div className="flex justify-between items-start">
                                                 <h3 className="font-bold text-blue-900 text-sm">{ann.title}</h3>

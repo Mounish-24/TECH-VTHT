@@ -335,16 +335,30 @@ export default function AdminDashboard() {
         e.preventDefault();
         try {
             const formData = new FormData();
+            
+            // Explicitly appending all required fields for the backend
             formData.append('course_code', 'Global');
             formData.append('type', 'Result Link');
             formData.append('title', resultTitle);
             formData.append('url', resultUrl);
-            formData.append('posted_by', 'Admin');
+            formData.append('posted_by', localStorage.getItem('user_id') || 'Admin');
+            
             await axios.post(`${API_URL}/materials`, formData);
+            
             alert("✅ Semester Result link published!");
-            setResultTitle(''); setResultUrl('');
+            setResultTitle(''); 
+            setResultUrl('');
             fetchResultLinks();
-        } catch (err) { alert('Failed to upload result link'); }
+            
+        } catch (err: any) { 
+            // This will now capture the exact error message from the backend!
+            console.error("Result Upload Error:", err.response?.data || err);
+            
+            const errorMessage = err.response?.data?.detail || err.response?.data?.message || err.message;
+            const formattedError = typeof errorMessage === 'string' ? errorMessage : JSON.stringify(errorMessage);
+            
+            alert(`Backend Error: ${formattedError}`); 
+        }
     };
 
     const handleDeleteLink = async (id: number) => {
@@ -353,7 +367,10 @@ export default function AdminDashboard() {
             await axios.delete(`${API_URL}/materials/${id}`);
             alert("Link deleted successfully");
             fetchResultLinks();
-        } catch (err) { alert("Failed to delete link"); }
+        } catch (err: any) { 
+            console.error("Delete Link Error:", err.response?.data || err);
+            alert("Failed to delete link"); 
+        }
     };
 
     const handleCreateUser = async (e: React.FormEvent) => {

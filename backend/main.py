@@ -801,7 +801,8 @@ async def upload_material(
         cid = course_id
         if not cid:
             course = db.query(models.Course).filter(models.Course.code == clean_course_code).first()
-            cid = course.id if course else 0
+            # 🌟 FIX: Changed '0' to 'None' so PostgreSQL accepts it as a NULL foreign key
+            cid = course.id if course else None
 
         db_material = models.Material(
             course_id=cid, 
@@ -876,27 +877,72 @@ def create_announcement(announcement: schemas.AnnouncementCreate, db: Session = 
     return db_announcement
 
 @app.get("/announcements")
-def get_announcements(audience: Optional[str] = "Global", type: Optional[str] = None, section: Optional[str] = None, student_id: Optional[str] = None, db: Session = Depends(get_db)):
+def get_announcements(
+    audience: Optional[str] = "Global", 
+    type: Optional[str] = None, 
+    section: Optional[str] = None, 
+    student_id: Optional[str] = None,
+    course_code: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
     query = db.query(models.Announcement)
     
-    if audience == "Student":
-        query = query.filter(models.Announcement.type.in_(["Global", "Student", "Subject", "Placement"]))
+    # 1. Filter by Type or Audience
+    if type:
+        # If a specific type (like "Lab" or "Subject") is requested, fetch it
+        query = query.filter(models.Announcement.type == type)
+    elif audience == "Student" or student_id:
+        # 🌟 FIX: Explicitly allow "Lab" and "Subject" for students
+        query = query.filter(models.Announcement.type.in_(["Global", "Student", "Subject", "Placement", "Lab"]))
     elif audience == "Faculty":
         query = query.filter(models.Announcement.type.in_(["Global", "Faculty"]))
     else:
         query = query.filter(models.Announcement.type == "Global")
 
+    # 2. Filter by Student's Section
     if student_id:
         student = db.query(models.Student).filter(models.Student.roll_no == student_id).first()
         if student:
+            # Match the student's exact section OR "All"
             query = query.filter((models.Announcement.section == "All") | (models.Announcement.section == student.section))
             
-    if type: 
-        query = query.filter(models.Announcement.type == type)
+    # 3. Filter by explicit Section (if passed)
     if section:
-        query = query.filter(models.Announcement.section == section)
+        query = query.filter((models.Announcement.section == "All") | (models.Announcement.section == section))
         
-    return query.order_by(models.Announcement.id.desc()).all()
+    # 4. Filter by explicit Course Code (if passed)
+    if course_code:
+        cleaned_course = course_code.upper().replace(' (LAB)', '').replace('(LAB)', '').strip()
+        query = query.filter(models.Announcement.course_code == cleaned_course)
+    
+    announcements = query.order_by(models.Announcement.id.desc()).all()
+    
+    # 5. Enrich announcements with faculty name
+    enriched_announcements = []
+    for ann in announcements:
+        ann_dict = {
+            "id": ann.id,
+            "title": ann.title,
+            "content": ann.content,
+            "type": ann.type,
+            "target_year": ann.target_year,
+            "external_link": ann.external_link,
+            "course_code": ann.course_code,
+            "section": ann.section,
+            "posted_by": ann.posted_by,
+            "created_at": ann.created_at
+        }
+        
+        # Fetch faculty name if posted_by is a staff number
+        faculty = db.query(models.Faculty).filter(models.Faculty.staff_no == ann.posted_by).first()
+        if faculty:
+            ann_dict["faculty_name"] = faculty.name
+        else:
+            ann_dict["faculty_name"] = ann.posted_by
+        
+        enriched_announcements.append(ann_dict)
+    
+    return enriched_announcements
 
 @app.delete("/announcements/{announcement_id}")
 def delete_announcement(announcement_id: int, db: Session = Depends(get_db)):

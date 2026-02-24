@@ -145,26 +145,29 @@ export default function LabManagementPage() {
     };
 
     // --- 7. LAB ANNOUNCEMENT POST (UPDATED) ---
-const handlePostLabAnnouncement = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    // We send the raw courseCode; the backend update above will clean it for us
-    try {
-        await axios.post(`${API_URL}/announcements`, {
-            title: labAnnouncement.title,
-            content: labAnnouncement.content,
-            type: "Lab", 
-            course_code: courseCode, 
-            posted_by: localStorage.getItem('user_id'),
-            section: sectionName // Ensure this matches the student's section
-        });
-        alert(`🔬 Lab notice broadcasted!`);
-        setLabAnnouncement({ title: '', content: '' });
-    } catch (error) {
-        alert("Broadcast failed. Check if the backend is running.");
-    }
-};
-    return (
+// --- 7. LAB ANNOUNCEMENT POST (UPDATED) ---
+    const handlePostLabAnnouncement = async (e: React.FormEvent) => {
+        e.preventDefault();
+        
+        try {
+            await axios.post(`${API_URL}/announcements`, {
+                title: labAnnouncement.title,
+                content: labAnnouncement.content,
+                type: "Lab", 
+                // 🌟 FIX 1: Decode and format the course code perfectly (e.g., "21AD32A (LAB)")
+                course_code: decodeURIComponent(courseCode).trim().toUpperCase(), 
+                section: sectionName, 
+                // 🌟 FIX 2: Explicitly tag this so the backend knows it belongs to Students
+                audience: "Student", 
+                posted_by: localStorage.getItem('user_id') || "Faculty"
+            });
+            alert(`🔬 Lab notice broadcasted successfully!`);
+            setLabAnnouncement({ title: '', content: '' });
+        } catch (error) {
+            console.error("Announcement Error:", error);
+            alert("Broadcast failed. Check console for details.");
+        }
+    };return (
         <div className="min-h-screen flex flex-col bg-gray-50">
             <Navbar />
             <div className="container mx-auto px-4 py-8 flex-grow">

@@ -23,8 +23,7 @@ useEffect(() => {
         if (!userId || !labId) return;
 
         const fetchLabData = async () => {
-            // 1. Create a clean base ID for matching (e.g., 21AI31L)
-            // This regex matches exactly what the backend now saves
+            // 1. Create a clean base ID for matching (e.g., ARTIFICIAL LAB)
             const baseId = labId.toUpperCase().replace(/\s*\(LAB\)/gi, '').trim();
 
             try {
@@ -33,40 +32,34 @@ useEffect(() => {
                 const studentData = stuRes.data;
                 setStudentProfile(studentData);
 
-                // 3. Fetch Lab Manuals using the baseId
-                const matRes = await axios.get(`${API_URL}/materials/${baseId}`);
-                setManuals(matRes.data.filter((m: any) => m.type === "Lab Manual"));
-
-                // 4. Fetch Announcements for this specific student
-                const annRes = await axios.get(`${API_URL}/announcements?student_id=${userId}`);
-                
-                // 5. ROBUST FILTERING LOGIC (Synchronized with Backend)
-                const filteredAnn = annRes.data.filter((a: any) => {
-                    const isLabNotice = a.type === "Lab";
-                    const aCode = (a.course_code || "").toUpperCase().trim();
-                    
-                    // Match logic:
-                    // - Announcement code must strictly match our Base ID or be Global/All
-                    const matchesCode = aCode === baseId || aCode === "GLOBAL" || aCode === "ALL";
-                    
-                    // Section Match:
-                    // - Strict comparison between announcement section and student profile section
-                    const matchesSection = 
-                        (a.section || "").trim().toUpperCase() === (studentData.section || "").trim().toUpperCase() || 
-                        a.section === "All" || 
-                        a.section === "Global";
-
-                    return isLabNotice && matchesCode && matchesSection;
-                });
-                setLabAnnouncements(filteredAnn);
-
-                // 6. Fetch Attendance from Academic Records
+                // 3. Fetch Academic Records to find the ACTUAL course_code for this lab
                 const attRes = await axios.get(`${API_URL}/marks/cia?student_id=${userId}`);
                 const currentLab = attRes.data.find((l: any) => {
                     const subjectCode = (l.course_code || "").toUpperCase().replace(/\s*\(LAB\)/gi, '').trim();
-                    return subjectCode === baseId;
+                    return subjectCode === baseId || (l.subject || "").toUpperCase().replace(/\s*\(LAB\)/gi, '').trim() === baseId;
                 });
+                
+                // Use the actual course code and clean it for API calls
+                let actualCourseCode = currentLab?.course_code || baseId;
+                // Clean the course code: remove "(LAB)" suffix and extra spaces
+                actualCourseCode = actualCourseCode.toUpperCase().replace(/\s*\(LAB\)/gi, '').trim();
                 setAttendance(currentLab?.subject_attendance || 0);
+
+                // 4. Fetch Lab Manuals using the safely encoded course code
+                const matRes = await axios.get(`${API_URL}/materials/${encodeURIComponent(actualCourseCode)}`);
+                setManuals(matRes.data.filter((m: any) => m.type === "Lab Manual"));
+
+                // 5. 🌟 FIX: Fetch ALL Student announcements, then safely filter them here in the frontend
+                const annRes = await axios.get(`${API_URL}/announcements?audience=Student&student_id=${userId}`);
+                
+                const specificNotices = (annRes.data || []).filter((a: any) =>
+                    a.type === 'Lab' && (
+                        a.course_code?.trim().toUpperCase() === actualCourseCode || 
+                        a.course_code?.trim().toUpperCase() === baseId
+                    )
+                );
+                
+                setLabAnnouncements(specificNotices);
 
             } catch (err) { 
                 console.error("Error loading lab data:", err); 
@@ -76,7 +69,6 @@ useEffect(() => {
         };
         fetchLabData();
     }, [labId]);
-
     if (loading) return (
         <div className="min-h-screen flex items-center justify-center bg-white">
             <div className="flex flex-col items-center gap-4">
@@ -147,7 +139,7 @@ useEffect(() => {
                                         <h4 className="font-black text-blue-900 text-[10px] uppercase tracking-wider">{a.title}</h4>
                                     </div>
                                     <p className="text-sm text-gray-600 leading-relaxed font-medium">{a.content}</p>
-                                    <p className="text-[8px] text-purple-600 font-bold uppercase mt-2">Notice • Posted By: {a.posted_by}</p>
+                                    <p className="text-[8px] text-purple-600 font-bold uppercase mt-2">Notice • Posted By: {a.faculty_name || a.posted_by}</p>
                                 </div>
                             )) : (
                                 <div className="text-center py-10">

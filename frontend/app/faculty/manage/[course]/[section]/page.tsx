@@ -43,6 +43,7 @@ export default function SectionManagement() {
     // Form States
     const [subAnn, setSubAnn] = useState({ title: '', content: '' });
     const [videoData, setVideoData] = useState({ title: '', url: '' });
+    const [courseSubject, setCourseSubject] = useState('');
 
     // --- 1. INITIAL FETCH ---
     const fetchData = async () => {
@@ -50,6 +51,10 @@ export default function SectionManagement() {
             const res = await axios.get(`${API_URL}/marks/section?course_code=${courseCode}&section=${sectionName}`);
             setStudents(res.data);
             setFilteredStudents(res.data);
+            // Capture the actual course subject from the first student's data
+            if (res.data.length > 0 && res.data[0].subject) {
+                setCourseSubject(res.data[0].subject);
+            }
         } catch (error) {
             console.error("Error fetching students", error);
         }
@@ -272,14 +277,16 @@ export default function SectionManagement() {
         } catch (error) { alert("Failed to post video."); } finally { setUploading(false); }
     };
 
-    const handlePostSubAnnouncement = async (e: React.FormEvent) => {
+const handlePostSubAnnouncement = async (e: React.FormEvent) => {
         e.preventDefault();
         try {
             await axios.post(`${API_URL}/announcements`, {
                 title: subAnn.title,
                 content: subAnn.content,
                 type: "Subject", 
-                course_code: courseCode,
+                course_code: courseCode.trim().toUpperCase(), // Sends "21AD32A"
+                section: sectionName, // Sends "A"
+                audience: "Student", // Tags for students
                 posted_by: localStorage.getItem('user_id') 
             });
             alert(`📢 Notice broadcasted!`);

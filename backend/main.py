@@ -1030,7 +1030,7 @@ def create_announcement(announcement: schemas.AnnouncementCreate, db: Session = 
 
 @app.get("/announcements")
 def get_announcements(
-    audience: Optional[str] = "Global", 
+    audience: Optional[str] = None, 
     type: Optional[str] = None, 
     section: Optional[str] = None, 
     student_id: Optional[str] = None,
@@ -1039,33 +1039,34 @@ def get_announcements(
 ):
     query = db.query(models.Announcement)
     
-    # 1. Filter by Type or Audience
+    # 🌟 FIX 1: If filtering by course_code, fetch Subject/Lab notices automatically
+    if course_code:
+        cleaned_course = course_code.upper().replace(' (LAB)', '').replace('(LAB)', '').strip()
+        query = query.filter(models.Announcement.course_code == cleaned_course)
+        if not type:
+            query = query.filter(models.Announcement.type.in_(["Subject", "Lab", "Global"]))
+            
+    # 🌟 FIX 2: General filtering by Type or Audience (Only if not searching by a specific course)
     if type:
-        # If a specific type (like "Lab" or "Subject") is requested, fetch it
         query = query.filter(models.Announcement.type == type)
-    elif audience == "Student" or student_id:
-        # 🌟 FIX: Explicitly allow "Lab" and "Subject" for students
-        query = query.filter(models.Announcement.type.in_(["Global", "Student", "Subject", "Placement", "Lab"]))
-    elif audience == "Faculty":
-        query = query.filter(models.Announcement.type.in_(["Global", "Faculty"]))
-    else:
-        query = query.filter(models.Announcement.type == "Global")
+    elif not course_code: 
+        if audience == "Student" or student_id:
+            query = query.filter(models.Announcement.type.in_(["Global", "Student", "Subject", "Placement", "Lab"]))
+        elif audience == "Faculty":
+            query = query.filter(models.Announcement.type.in_(["Global", "Faculty"]))
+        else:
+            query = query.filter(models.Announcement.type == "Global")
 
-    # 2. Filter by Student's Section
+    # 3. Filter by Student's Section
     if student_id:
         student = db.query(models.Student).filter(models.Student.roll_no == student_id).first()
         if student:
             # Match the student's exact section OR "All"
             query = query.filter((models.Announcement.section == "All") | (models.Announcement.section == student.section))
             
-    # 3. Filter by explicit Section (if passed)
+    # 4. Filter by explicit Section (if passed)
     if section:
         query = query.filter((models.Announcement.section == "All") | (models.Announcement.section == section))
-        
-    # 4. Filter by explicit Course Code (if passed)
-    if course_code:
-        cleaned_course = course_code.upper().replace(' (LAB)', '').replace('(LAB)', '').strip()
-        query = query.filter(models.Announcement.course_code == cleaned_course)
     
     announcements = query.order_by(models.Announcement.id.desc()).all()
     
@@ -1095,6 +1096,32 @@ def get_announcements(
         enriched_announcements.append(ann_dict)
     
     return enriched_announcements
+
+# 🌟 NEW ENDPOINT: Fetches ONLY the announcements posted by the logged-in faculty
+@app.get("/announcements/faculty-posts")
+def get_faculty_announcements(posted_by: str, db: Session = Depends(get_db)):
+    """Fetches announcements created by a specific faculty member for their dashboard."""
+    announcements = db.query(models.Announcement).filter(
+        models.Announcement.posted_by == posted_by
+    ).order_by(models.Announcement.id.desc()).all()
+    return announcements
+
+@app.delete("/announcements/{announcement_id}")
+def delete_announcement(announcement_id: int, db: Session = Depends(get_db)):
+    ann = db.query(models.Announcement).filter(models.Announcement.id == announcement_id).first()
+    if not ann:
+        raise HTTPException(status_code=404, detail="Announcement not found")
+    db.delete(ann)
+    db.commit()
+    return {"message": "Announcement deleted successfully"}
+# 🌟 NEW ENDPOINT: Fetches ONLY the announcements posted by the logged-in faculty
+@app.get("/announcements/faculty-posts")
+def get_faculty_announcements(posted_by: str, db: Session = Depends(get_db)):
+    """Fetches announcements created by a specific faculty member for their dashboard."""
+    announcements = db.query(models.Announcement).filter(
+        models.Announcement.posted_by == posted_by
+    ).order_by(models.Announcement.id.desc()).all()
+    return announcements
 
 @app.delete("/announcements/{announcement_id}")
 def delete_announcement(announcement_id: int, db: Session = Depends(get_db)):

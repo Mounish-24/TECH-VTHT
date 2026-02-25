@@ -56,6 +56,7 @@ class Student(StudentBase):
 class CourseBase(BaseModel):
     code: str
     title: str
+    year: Optional[int] = None
     semester: int
     credits: int
     category: Optional[str] = None

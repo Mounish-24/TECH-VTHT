@@ -6,11 +6,21 @@ from sqlalchemy.orm import sessionmaker
 # Replace [YOUR-PASSWORD] and [YOUR-PROJECT-REF] with your actual Supabase details
 # You can find this URI in Supabase under Settings > Database
 # Use YOUR real password and YOUR real reference ID
-SQLALCHEMY_DATABASE_URL = "postgresql://postgres:VMOUNISH123456@db.hwxypsgyczekbhfkgakl.supabase.co:5432/postgres"
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+# Depending on your SQLAlchemy version, this import might be slightly different. 
+# Keep whatever declarative_base import you already have at the top of your file!
 
-# --- 2. ENGINE CONFIGURATION ---
-# We remove SQLite-specific 'check_same_thread' as it's not needed for PostgreSQL
-engine = create_engine(SQLALCHEMY_DATABASE_URL)
+# 🌟 1. Change to offline SQLite database URL
+SQLALCHEMY_DATABASE_URL = "sqlite:///./weboops.db"
+
+# 🌟 2. Create the engine with the special SQLite argument
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL, 
+    connect_args={"check_same_thread": False} # Required for SQLite with FastAPI
+)
+
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # --- 3. SESSION FACTORY ---
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

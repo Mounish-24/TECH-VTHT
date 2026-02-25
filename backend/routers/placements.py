@@ -79,3 +79,46 @@ def delete_announcement(ann_id: int, db: Session = Depends(database.get_db)):
         db.commit()
         return {"message": "Notice deleted"}
     raise HTTPException(status_code=404, detail="Not found")
+
+# Add at the bottom of your router
+
+from typing import List
+from fastapi.responses import JSONResponse
+
+@router.get("/students")
+def get_placed_students(db: Session = Depends(database.get_db)):
+    students = db.query(models.PlacedStudent).all()
+    return [{
+        "id": s.id,
+        "name": s.name,
+        "company": s.company_name,
+        "lpa": float(s.lpa),
+        "linkedin": s.linkedin_url,
+        # "photo_url": s.photo_url,   # optional
+    } for s in students]
+
+
+@router.delete("/student/{student_id}")
+def delete_placed_student(student_id: int, db: Session = Depends(database.get_db)):
+    student = db.query(models.PlacedStudent).filter(models.PlacedStudent.id == student_id).first()
+    if not student:
+        raise HTTPException(404, "Student record not found")
+    db.delete(student)
+    db.commit()
+    return {"message": "Student record deleted"}
+
+
+@router.get("/companies")
+def get_companies(db: Session = Depends(database.get_db)):
+    companies = db.query(models.Company).all()
+    return [{"id": c.id, "name": c.name, "logo_url": c.logo_url} for c in companies]
+
+
+@router.delete("/companies/{company_id}")
+def delete_company(company_id: int, db: Session = Depends(database.get_db)):
+    company = db.query(models.Company).filter(models.Company.id == company_id).first()
+    if not company:
+        raise HTTPException(404, "Company not found")
+    db.delete(company)
+    db.commit()
+    return {"message": "Company removed from marquee"}

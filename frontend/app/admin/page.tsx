@@ -393,11 +393,14 @@ export default function AdminDashboard() {
         e.preventDefault();
         try {
             const payload = {
-                ...data,
+                code: data.code,
                 title: isLab && !data.title.includes('(Lab)') ? `${data.title} (Lab)` : data.title,
                 year: Number(data.year),
                 semester: Number(data.semester),
-                credits: Number(data.credits)
+                credits: Number(data.credits),
+                section: data.section,
+                faculty_id: data.faculty_id,
+                category: data.category || null
             };
             await axios.post(`${API_URL}/admin/courses`, payload);
             alert("Subject added!");

@@ -58,6 +58,7 @@ class Course(Base):
     id = Column(Integer, primary_key=True, index=True)
     code = Column(String, index=True) 
     title = Column(String)
+    year = Column(Integer, nullable=True)
     semester = Column(Integer)
     credits = Column(Integer)
     category = Column(String, nullable=True)

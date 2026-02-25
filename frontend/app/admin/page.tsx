@@ -119,6 +119,9 @@ export default function AdminDashboard() {
     const [activeTab, setActiveTab] = useState('announcements');
     const [listSubView, setListSubView] = useState<'none' | 'students' | 'faculties'>('none');
 
+    // --- CSV Upload State ---
+    const [uploadedCSVs, setUploadedCSVs] = useState<any[]>([]);
+
     // --- Arrear States (Pre-processing & Sorting) ---
     const [arrearFile, setArrearFile] = useState<File | null>(null);
     const [arrearPreview, setArrearPreview] = useState<any[] | null>(null);
@@ -126,6 +129,7 @@ export default function AdminDashboard() {
     const [targetYear, setTargetYear] = useState('1');
     const [targetSem, setTargetSem] = useState('1');
     const [targetSec, setTargetSec] = useState('A');
+    const [uploadedArrearFiles, setUploadedArrearFiles] = useState<any[]>([]); // 🌟 NEW STATE
 
     // --- Filter States ---
     const [filterYear, setFilterYear] = useState('');
@@ -161,6 +165,7 @@ export default function AdminDashboard() {
         semester: 1,
         section: 'A'
     });
+    const [assignedAdvisors, setAssignedAdvisors] = useState<any[]>([]); // 🌟 NEW STATE
 
     // --- User Creation States ---
     const [userData, setUserData] = useState({
@@ -195,6 +200,9 @@ export default function AdminDashboard() {
     useEffect(() => {
         if (activeTab === 'sem result link') fetchResultLinks();
         if (activeTab === 'announcements') fetchActiveAnnouncements();
+        if (activeTab === 'create user') fetchUploadedCSVs();
+        if (activeTab === 'upload arrear') fetchUploadedArrearFiles(); // 🌟 ADDED
+        if (activeTab === 'class advisor') fetchAssignedAdvisors(); // 🌟 ADDED
     }, [activeTab]);
 
     useEffect(() => {
@@ -251,6 +259,35 @@ export default function AdminDashboard() {
         } catch (err) { console.error("Error fetching announcements", err); }
     };
 
+    const fetchUploadedCSVs = async () => {
+        try {
+            const res = await axios.get(`${API_URL}/admin/bulk-upload/files`);
+            setUploadedCSVs(res.data);
+        } catch (err) {
+            console.error("Error fetching uploaded CSVs", err);
+        }
+    };
+
+    // 🌟 NEW FETCH FUNCTION
+    const fetchUploadedArrearFiles = async () => {
+        try {
+            const res = await axios.get(`${API_URL}/admin/arrears/files`);
+            setUploadedArrearFiles(res.data);
+        } catch (err) {
+            console.error("Error fetching arrear files", err);
+        }
+    };
+
+    // 🌟 NEW FETCH FUNCTION
+    const fetchAssignedAdvisors = async () => {
+        try {
+            const res = await axios.get(`${API_URL}/advisors`);
+            setAssignedAdvisors(res.data);
+        } catch (err) {
+            console.error("Error fetching advisors", err);
+        }
+    };
+
     const filteredResults = (listSubView === 'students' ? studentsList : faculties).filter((user: any) => {
         const query = searchQuery.toLowerCase();
         const nameMatch = user.name?.toLowerCase().includes(query);
@@ -301,8 +338,48 @@ export default function AdminDashboard() {
             const res = await axios.post(`${API_URL}/admin/bulk-upload/${bulkRole}`, formData);
             alert(res.data.message);
             setBulkFile(null);
-            fetchStudents(); fetchFaculties();
-        } catch (err) { alert("Bulk upload failed."); }
+            fetchStudents(); 
+            fetchFaculties();
+            fetchUploadedCSVs(); // Refresh the list of CSV files
+        } catch (err) { alert("Bulk upload failed. Check file format."); }
+    };
+
+    // --- CSV File Deletion Logic ---
+    const handleDeleteCSV = async (filename: string) => {
+        if (!confirm(`⚠️ WARNING: Deleting this file will ALSO DELETE ALL USERS that were created from it. Proceed?`)) return;
+        try {
+            await axios.delete(`${API_URL}/admin/bulk-upload/file/${filename}`);
+            alert("File and associated users successfully deleted!");
+            fetchUploadedCSVs(); 
+            fetchStudents(); 
+            fetchFaculties(); 
+        } catch (error) {
+            alert("Failed to delete CSV file and users.");
+        }
+    };
+
+    // 🌟 NEW ARREAR FILE DELETION LOGIC
+    const handleDeleteArrearFile = async (filename: string) => {
+        if (!confirm(`⚠️ WARNING: Deleting this file will ALSO DELETE ALL ARREAR RECORDS imported from it. Proceed?`)) return;
+        try {
+            await axios.delete(`${API_URL}/admin/arrears/file/${filename}`);
+            alert("Arrear file and associated records successfully deleted!");
+            fetchUploadedArrearFiles(); 
+        } catch (error) {
+            alert("Failed to delete arrear file.");
+        }
+    };
+
+    // 🌟 NEW ADVISOR DELETION LOGIC
+    const handleDeleteAdvisor = async (advisor_no: string) => {
+        if (!confirm(`Remove assignment for Advisor ID ${advisor_no}?`)) return;
+        try {
+            await axios.delete(`${API_URL}/advisors/${advisor_no}`);
+            alert("Advisor assignment removed successfully!");
+            fetchAssignedAdvisors();
+        } catch (error) {
+            alert("Failed to remove advisor.");
+        }
     };
 
     const handlePostAnnouncement = async (e: React.FormEvent) => {
@@ -335,8 +412,6 @@ export default function AdminDashboard() {
         e.preventDefault();
         try {
             const formData = new FormData();
-            
-            // Explicitly appending all required fields for the backend
             formData.append('course_code', 'Global');
             formData.append('type', 'Result Link');
             formData.append('title', resultTitle);
@@ -344,19 +419,14 @@ export default function AdminDashboard() {
             formData.append('posted_by', localStorage.getItem('user_id') || 'Admin');
             
             await axios.post(`${API_URL}/materials`, formData);
-            
             alert("✅ Semester Result link published!");
             setResultTitle(''); 
             setResultUrl('');
             fetchResultLinks();
-            
         } catch (err: any) { 
-            // This will now capture the exact error message from the backend!
             console.error("Result Upload Error:", err.response?.data || err);
-            
             const errorMessage = err.response?.data?.detail || err.response?.data?.message || err.message;
             const formattedError = typeof errorMessage === 'string' ? errorMessage : JSON.stringify(errorMessage);
-            
             alert(`Backend Error: ${formattedError}`); 
         }
     };
@@ -427,6 +497,7 @@ export default function AdminDashboard() {
             await axios.post(`${API_URL}/advisors/assign`, formData);
             alert("Class Advisor Assigned Successfully!");
             setAdvisorData({ advisor_no: '', faculty_id: '', year: 1, semester: 1, section: 'A' });
+            fetchAssignedAdvisors(); // Refresh UI panel
         } catch (err: any) {
             alert(err.response?.data?.detail || "Assignment Failed. Please try again.");
         }
@@ -476,6 +547,7 @@ export default function AdminDashboard() {
             setArrearPreview(null);
             setArrearFile(null);
             fetchActiveAnnouncements();
+            fetchUploadedArrearFiles(); // Refresh the UI file list instantly
         } catch (err) {
             alert("Final upload failed.");
         }
@@ -490,7 +562,7 @@ export default function AdminDashboard() {
             setActiveTab(tab);
             setListSubView('none');
             setSearchQuery('');
-            setArrearPreview(null); // Reset preview on tab change
+            setArrearPreview(null); 
         }
     };
 
@@ -583,80 +655,118 @@ export default function AdminDashboard() {
 
                     {/* TAB: Create User */}
                     {activeTab === 'create user' && (
-                        <div className="animate-in fade-in duration-300">
-                            <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2 mb-2"><PlusCircle className="text-blue-600" /> New Registration</h2>
-                            <p className="text-[10px] text-red-600 font-bold mb-6 uppercase tracking-wider italic">* Note: Ensure subjects exist before registering students for a specific sem.</p>
-                            <form onSubmit={handleCreateUser} className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl mb-12">
-                                <div className="space-y-1">
-                                    <label className="text-[10px] font-black uppercase text-gray-400">ID / Roll No</label>
-                                    <input type="text" placeholder="HTS Number / Roll No" value={userData.id} onChange={(e) => setUserData({...userData, id: e.target.value})} className="w-full p-2.5 border rounded-lg" required />
-                                </div>
-                                <div className="space-y-1">
-                                    <label className="text-[10px] font-black uppercase text-gray-400">Full Name</label>
-                                    <input type="text" placeholder="Full Name" value={userData.name} onChange={(e) => setUserData({...userData, name: e.target.value})} className="w-full p-2.5 border rounded-lg" required />
-                                </div>
-                                <div className="space-y-1">
-                                    <label className="text-[10px] font-black uppercase text-gray-400">Role</label>
-                                    <select value={userData.role} onChange={(e) => setUserData({...userData, role: e.target.value})} className="w-full p-2.5 border rounded-lg bg-white"><option value="Student">Student</option><option value="Faculty">Faculty</option></select>
-                                </div>
-                                <div className="space-y-1">
-                                    <label className="text-[10px] font-black uppercase text-gray-400">Password</label>
-                                    <input type="password" placeholder="Initial Password" value={userData.password} onChange={(e) => setUserData({...userData, password: e.target.value})} className="w-full p-2.5 border rounded-lg" required />
-                                </div>
-                                
-                                {userData.role === 'Student' ? (
-                                    <>
-                                        <div className="space-y-1">
-                                            <label className="text-[10px] font-black uppercase text-gray-400">Year</label>
-                                            <select value={userData.year} onChange={(e) => setUserData({...userData, year: Number(e.target.value)})} className="w-full p-2.5 border rounded-lg bg-white">
-                                                {[1,2,3,4].map(y => <option key={y} value={y}>{y} Year</option>)}
-                                            </select>
-                                        </div>
-                                        <div className="space-y-1">
-                                            <label className="text-[10px] font-black uppercase text-gray-400">Semester</label>
-                                            <select value={userData.semester} onChange={(e) => setUserData({...userData, semester: Number(e.target.value)})} className="p-2.5 border rounded-lg bg-white">
-                                                {[1,2,3,4,5,6,7,8].map(s => <option key={s} value={s}>{s} Sem</option>)}
-                                            </select>
-                                        </div>
-                                        <div className="space-y-1 md:col-span-2">
-                                            <label className="text-[10px] font-black uppercase text-gray-400">Section</label>
-                                            <select value={userData.section} onChange={(e) => setUserData({...userData, section: e.target.value})} className="w-full p-2.5 border rounded-lg bg-white font-bold text-orange-600">
-                                                <option value="A">Section A</option><option value="B">Section B</option><option value="C">Section C</option>
-                                            </select>
-                                        </div>
-                                    </>
-                                ) : (
-                                    <>
-                                        <div className="space-y-1">
-                                            <label className="text-[10px] font-black uppercase text-gray-400">Designation</label>
-                                            <select value={userData.designation} onChange={(e) => setUserData({...userData, designation: e.target.value})} className="w-full p-2.5 border rounded-lg bg-white">
-                                                <option value="Assistant Professor">Assistant Professor</option>
-                                                <option value="Associate Professor">Associate Professor</option>
-                                                <option value="Professor">Professor</option>
-                                                <option value="HOD">HOD</option>
-                                            </select>
-                                        </div>
-                                        <div className="space-y-1">
-                                            <label className="text-[10px] font-black uppercase text-gray-400">Date of Joining</label>
-                                            <input type="date" value={userData.doj} onChange={(e) => setUserData({...userData, doj: e.target.value})} className="w-full p-2.5 border rounded-lg" />
-                                        </div>
-                                    </>
-                                )}
-                                <button type="submit" className="bg-blue-600 text-white p-3 rounded-lg md:col-span-2 font-bold shadow-lg hover:bg-blue-700 transition-all">Complete Registration</button>
-                            </form>
-                            <div className="border-t pt-8">
-                                <h2 className="text-xl font-bold mb-4 text-green-700 flex items-center gap-2"><LinkIcon /> Bulk Upload via CSV</h2>
-                                <form onSubmit={handleBulkUpload} className="flex flex-wrap gap-4 items-end bg-green-50 p-6 rounded-xl border border-green-100">
-                                    <div className="flex flex-col gap-1">
-                                        <label className="text-[10px] font-black uppercase text-green-600">Select Role</label>
-                                        <select value={bulkRole} onChange={(e) => setBulkRole(e.target.value)} className="p-2.5 border rounded-lg bg-white outline-none"><option value="Student">Students</option><option value="Faculty">Faculty</option></select>
+                        <div className="animate-in fade-in duration-300 grid grid-cols-1 lg:grid-cols-2 gap-12">
+                            {/* Left Column: Forms */}
+                            <div>
+                                <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2 mb-2"><PlusCircle className="text-blue-600" /> New Registration</h2>
+                                <p className="text-[10px] text-red-600 font-bold mb-6 uppercase tracking-wider italic">* Note: Ensure subjects exist before registering students for a specific sem.</p>
+                                <form onSubmit={handleCreateUser} className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] font-black uppercase text-gray-400">ID / Roll No</label>
+                                        <input type="text" placeholder="HTS Number / Roll No" value={userData.id} onChange={(e) => setUserData({...userData, id: e.target.value})} className="w-full p-2.5 border rounded-lg" required />
                                     </div>
-                                    <div className="flex flex-col gap-1">
-                                        <label className="text-[10px] font-black uppercase text-green-600">CSV File</label>
-                                        <input type="file" accept=".csv" onChange={(e) => setBulkFile(e.target.files?.[0] || null)} className="p-2 border rounded-lg bg-white text-sm" />
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] font-black uppercase text-gray-400">Full Name</label>
+                                        <input type="text" placeholder="Full Name" value={userData.name} onChange={(e) => setUserData({...userData, name: e.target.value})} className="w-full p-2.5 border rounded-lg" required />
                                     </div>
-                                    <button type="submit" className="bg-green-600 text-white px-6 py-2.5 rounded-lg font-bold hover:bg-green-700 shadow-md">Start Import</button>
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] font-black uppercase text-gray-400">Role</label>
+                                        <select value={userData.role} onChange={(e) => setUserData({...userData, role: e.target.value})} className="w-full p-2.5 border rounded-lg bg-white"><option value="Student">Student</option><option value="Faculty">Faculty</option></select>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] font-black uppercase text-gray-400">Password</label>
+                                        <input type="password" placeholder="Initial Password" value={userData.password} onChange={(e) => setUserData({...userData, password: e.target.value})} className="w-full p-2.5 border rounded-lg" required />
+                                    </div>
+                                    
+                                    {userData.role === 'Student' ? (
+                                        <>
+                                            <div className="space-y-1">
+                                                <label className="text-[10px] font-black uppercase text-gray-400">Year</label>
+                                                <select value={userData.year} onChange={(e) => setUserData({...userData, year: Number(e.target.value)})} className="w-full p-2.5 border rounded-lg bg-white">
+                                                    {[1,2,3,4].map(y => <option key={y} value={y}>{y} Year</option>)}
+                                                </select>
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-[10px] font-black uppercase text-gray-400">Semester</label>
+                                                <select value={userData.semester} onChange={(e) => setUserData({...userData, semester: Number(e.target.value)})} className="p-2.5 border rounded-lg bg-white">
+                                                    {[1,2,3,4,5,6,7,8].map(s => <option key={s} value={s}>{s} Sem</option>)}
+                                                </select>
+                                            </div>
+                                            <div className="space-y-1 md:col-span-2">
+                                                <label className="text-[10px] font-black uppercase text-gray-400">Section</label>
+                                                <select value={userData.section} onChange={(e) => setUserData({...userData, section: e.target.value})} className="w-full p-2.5 border rounded-lg bg-white font-bold text-orange-600">
+                                                    <option value="A">Section A</option><option value="B">Section B</option><option value="C">Section C</option>
+                                                </select>
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <div className="space-y-1">
+                                                <label className="text-[10px] font-black uppercase text-gray-400">Designation</label>
+                                                <select value={userData.designation} onChange={(e) => setUserData({...userData, designation: e.target.value})} className="w-full p-2.5 border rounded-lg bg-white">
+                                                    <option value="Assistant Professor">Assistant Professor</option>
+                                                    <option value="Associate Professor">Associate Professor</option>
+                                                    <option value="Professor">Professor</option>
+                                                    <option value="HOD">HOD</option>
+                                                </select>
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-[10px] font-black uppercase text-gray-400">Date of Joining</label>
+                                                <input type="date" value={userData.doj} onChange={(e) => setUserData({...userData, doj: e.target.value})} className="w-full p-2.5 border rounded-lg" />
+                                            </div>
+                                        </>
+                                    )}
+                                    <button type="submit" className="bg-blue-600 text-white p-3 rounded-lg md:col-span-2 font-bold shadow-lg hover:bg-blue-700 transition-all">Complete Registration</button>
                                 </form>
+                                <div className="border-t pt-8">
+                                    <h2 className="text-xl font-bold mb-4 text-green-700 flex items-center gap-2"><LinkIcon /> Bulk Upload via CSV</h2>
+                                    <form onSubmit={handleBulkUpload} className="flex flex-wrap gap-4 items-end bg-green-50 p-6 rounded-xl border border-green-100">
+                                        <div className="flex flex-col gap-1 w-full sm:w-auto flex-1">
+                                            <label className="text-[10px] font-black uppercase text-green-600">Select Role</label>
+                                            <select value={bulkRole} onChange={(e) => setBulkRole(e.target.value)} className="p-2.5 border rounded-lg bg-white outline-none"><option value="Student">Students</option><option value="Faculty">Faculty</option></select>
+                                        </div>
+                                        <div className="flex flex-col gap-1 w-full sm:w-auto flex-[2]">
+                                            <label className="text-[10px] font-black uppercase text-green-600">CSV File</label>
+                                            <input type="file" accept=".csv" onChange={(e) => setBulkFile(e.target.files?.[0] || null)} className="p-2 border rounded-lg bg-white text-sm w-full" />
+                                        </div>
+                                        <button type="submit" className="bg-green-600 text-white px-6 py-2.5 rounded-lg font-bold hover:bg-green-700 shadow-md w-full sm:w-auto">Start Import</button>
+                                    </form>
+                                </div>
+                            </div>
+                            
+                            {/* Right Column: Uploaded CSVs */}
+                            <div className="lg:border-l lg:pl-12">
+                                <h2 className="text-xl font-bold mb-2 uppercase tracking-tighter flex items-center gap-2">
+                                    <FileText className="text-purple-600" size={24} /> Uploaded CSV Files
+                                </h2>
+                                <p className="text-[10px] text-gray-400 font-bold mb-6 uppercase tracking-wider italic">
+                                    * Deleting a file will remove all users imported from it.
+                                </p>
+                                
+                                <div className="space-y-3 max-h-[600px] overflow-y-auto pr-2">
+                                    {uploadedCSVs.length > 0 ? uploadedCSVs.map((file: any) => (
+                                        <div key={file.filename} className="p-4 border border-purple-100 rounded-xl bg-purple-50/30 flex justify-between items-center group hover:bg-white transition-all shadow-sm">
+                                            <div className="overflow-hidden">
+                                                <p className="font-bold text-blue-900 truncate">{file.filename}</p>
+                                                <p className="text-[10px] text-gray-500 font-mono truncate mt-1">
+                                                    Uploaded: {new Date(file.uploaded_at * 1000).toLocaleString()}
+                                                </p>
+                                            </div>
+                                            <button 
+                                                onClick={() => handleDeleteCSV(file.filename)} 
+                                                className="p-3 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0"
+                                                title="Delete File and Associated Users"
+                                            >
+                                                <Trash2 size={18} />
+                                            </button>
+                                        </div>
+                                    )) : (
+                                        <div className="text-center py-16 border-2 border-dashed border-gray-200 rounded-2xl bg-gray-50/50">
+                                            <FileText className="mx-auto text-gray-300 mb-3" size={40} />
+                                            <p className="text-gray-400 italic text-sm">No CSV files currently managed.</p>
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         </div>
                     )}
@@ -774,39 +884,72 @@ export default function AdminDashboard() {
 
                     {/* TAB: Class Advisor Mapping */}
                     {activeTab === 'class advisor' && (
-                        <div className="animate-in fade-in duration-300">
-                            <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2 mb-6">
-                                <UserCheck className="text-blue-600" /> Class Advisor Assignment
-                            </h2>
-                            <form onSubmit={handleAssignAdvisor} className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl bg-gray-50 p-8 rounded-2xl border">
-                                <div className="flex flex-col gap-1">
-                                    <label className="text-[10px] font-black uppercase text-gray-400">Advisor ID / Reference</label>
-                                    <input type="text" placeholder="e.g. ADV_AD_01" value={advisorData.advisor_no} onChange={(e) => setAdvisorData({...advisorData, advisor_no: e.target.value})} className="p-2.5 border rounded-lg" required />
+                        <div className="animate-in fade-in duration-300 grid grid-cols-1 lg:grid-cols-2 gap-12">
+                            {/* Left Column: Form */}
+                            <div>
+                                <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2 mb-6">
+                                    <UserCheck className="text-blue-600" /> Class Advisor Assignment
+                                </h2>
+                                <form onSubmit={handleAssignAdvisor} className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-gray-50 p-8 rounded-2xl border">
+                                    <div className="flex flex-col gap-1">
+                                        <label className="text-[10px] font-black uppercase text-gray-400">Advisor ID / Reference</label>
+                                        <input type="text" placeholder="e.g. ADV_AD_01" value={advisorData.advisor_no} onChange={(e) => setAdvisorData({...advisorData, advisor_no: e.target.value})} className="p-2.5 border rounded-lg" required />
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                        <label className="text-[10px] font-black uppercase text-gray-400">Select Faculty Member</label>
+                                        <SearchableDropdown options={faculties} value={advisorData.faculty_id} onChange={(val) => setAdvisorData({...advisorData, faculty_id: val})} placeholder="-- Select Faculty --" displayKey="name" valueKey="staff_no" />
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                        <label className="text-[10px] font-black uppercase text-gray-400">Target Year</label>
+                                        <select value={advisorData.year} onChange={(e) => setAdvisorData({...advisorData, year: Number(e.target.value)})} className="p-2.5 border rounded-lg bg-white">
+                                            {[1,2,3,4].map(y => <option key={y} value={y}>{y} Year</option>)}
+                                        </select>
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                        <label className="text-[10px] font-black uppercase text-gray-400">Semester</label>
+                                        <select value={advisorData.semester} onChange={(e) => setAdvisorData({...advisorData, semester: Number(e.target.value)})} className="p-2.5 border rounded-lg bg-white">
+                                            {[1,2,3,4,5,6,7,8].map(s => <option key={s} value={s}>{s} Sem</option>)}
+                                        </select>
+                                    </div>
+                                    <div className="flex flex-col gap-1 md:col-span-2">
+                                        <label className="text-[10px] font-black uppercase text-gray-400">Class Section</label>
+                                        <select value={advisorData.section} onChange={(e) => setAdvisorData({...advisorData, section: e.target.value})} className="p-2.5 border rounded-lg bg-white font-bold text-orange-600">
+                                            <option value="A">Section A</option><option value="B">Section B</option><option value="C">Section C</option>
+                                        </select>
+                                    </div>
+                                    <button type="submit" className="bg-blue-600 text-white p-3 rounded-lg md:col-span-2 font-bold shadow-lg hover:bg-blue-700 transition-all">Confirm Advisor Mapping</button>
+                                </form>
+                            </div>
+
+                            {/* Right Column: Assigned Advisors List */}
+                            <div className="lg:border-l lg:pl-12">
+                                <h2 className="text-xl font-bold mb-6 uppercase tracking-tighter flex items-center gap-2">
+                                    <Users className="text-purple-600" size={24} /> Assigned Advisors
+                                </h2>
+                                <div className="space-y-3 max-h-[600px] overflow-y-auto pr-2">
+                                    {assignedAdvisors.length > 0 ? assignedAdvisors.map((adv: any) => (
+                                        <div key={adv.advisor_no} className="p-4 border border-purple-100 rounded-xl bg-purple-50/30 flex justify-between items-center group hover:bg-white transition-all shadow-sm">
+                                            <div className="overflow-hidden">
+                                                <p className="font-bold text-blue-900 truncate">{adv.advisor_no} - {adv.faculty_name || adv.faculty_id}</p>
+                                                <p className="text-[10px] text-gray-500 font-mono truncate mt-1">
+                                                    Year {adv.year} | Sem {adv.semester} | Sec {adv.section}
+                                                </p>
+                                            </div>
+                                            <button 
+                                                onClick={() => handleDeleteAdvisor(adv.advisor_no)} 
+                                                className="p-3 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0"
+                                            >
+                                                <Trash2 size={18} />
+                                            </button>
+                                        </div>
+                                    )) : (
+                                        <div className="text-center py-16 border-2 border-dashed border-gray-200 rounded-2xl bg-gray-50/50">
+                                            <UserCheck className="mx-auto text-gray-300 mb-3" size={40} />
+                                            <p className="text-gray-400 italic text-sm">No advisors assigned yet.</p>
+                                        </div>
+                                    )}
                                 </div>
-                                <div className="flex flex-col gap-1">
-                                    <label className="text-[10px] font-black uppercase text-gray-400">Select Faculty Member</label>
-                                    <SearchableDropdown options={faculties} value={advisorData.faculty_id} onChange={(val) => setAdvisorData({...advisorData, faculty_id: val})} placeholder="-- Select Faculty --" displayKey="name" valueKey="staff_no" />
-                                </div>
-                                <div className="flex flex-col gap-1">
-                                    <label className="text-[10px] font-black uppercase text-gray-400">Target Year</label>
-                                    <select value={advisorData.year} onChange={(e) => setAdvisorData({...advisorData, year: Number(e.target.value)})} className="p-2.5 border rounded-lg bg-white">
-                                        {[1,2,3,4].map(y => <option key={y} value={y}>{y} Year</option>)}
-                                    </select>
-                                </div>
-                                <div className="flex flex-col gap-1">
-                                    <label className="text-[10px] font-black uppercase text-gray-400">Semester</label>
-                                    <select value={advisorData.semester} onChange={(e) => setAdvisorData({...advisorData, semester: Number(e.target.value)})} className="p-2.5 border rounded-lg bg-white">
-                                        {[1,2,3,4,5,6,7,8].map(s => <option key={s} value={s}>{s} Sem</option>)}
-                                    </select>
-                                </div>
-                                <div className="flex flex-col gap-1 md:col-span-2">
-                                    <label className="text-[10px] font-black uppercase text-gray-400">Class Section</label>
-                                    <select value={advisorData.section} onChange={(e) => setAdvisorData({...advisorData, section: e.target.value})} className="p-2.5 border rounded-lg bg-white font-bold text-orange-600">
-                                        <option value="A">Section A</option><option value="B">Section B</option><option value="C">Section C</option>
-                                    </select>
-                                </div>
-                                <button type="submit" className="bg-blue-600 text-white p-3 rounded-lg md:col-span-2 font-bold shadow-lg hover:bg-blue-700 transition-all">Confirm Advisor Mapping</button>
-                            </form>
+                            </div>
                         </div>
                     )}
 
@@ -848,99 +991,137 @@ export default function AdminDashboard() {
 
                     {/* TAB: Upload Arrear */}
                     {activeTab === 'upload arrear' && (
-                        <div className="animate-in fade-in duration-300">
-                            <h2 className="text-xl font-bold mb-6 flex items-center gap-2 text-red-700">
-                                <FileText /> Arrear Deep-Sort Upload
-                            </h2>
+                        <div className="animate-in fade-in duration-300 grid grid-cols-1 lg:grid-cols-2 gap-12">
+                            {/* Left Column: Form & Preview */}
+                            <div>
+                                <h2 className="text-xl font-bold mb-6 flex items-center gap-2 text-red-700">
+                                    <FileText /> Arrear Deep-Sort Upload
+                                </h2>
 
-                            {!arrearPreview ? (
-                                <form onSubmit={handleAnalyzeArrears} className="space-y-6 bg-gray-50 p-8 rounded-2xl border">
-                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                        <div>
-                                            <label className="text-[10px] font-black uppercase text-gray-400">Target Year</label>
-                                            <select value={targetYear} onChange={(e) => setTargetYear(e.target.value)} className="w-full p-2.5 border rounded-lg bg-white">
-                                                {[1,2,3,4].map(y => <option key={y} value={y}>{y} Year</option>)}
-                                            </select>
+                                {!arrearPreview ? (
+                                    <form onSubmit={handleAnalyzeArrears} className="space-y-6 bg-gray-50 p-8 rounded-2xl border">
+                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                            <div>
+                                                <label className="text-[10px] font-black uppercase text-gray-400">Target Year</label>
+                                                <select value={targetYear} onChange={(e) => setTargetYear(e.target.value)} className="w-full p-2.5 border rounded-lg bg-white">
+                                                    {[1,2,3,4].map(y => <option key={y} value={y}>{y} Year</option>)}
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label className="text-[10px] font-black uppercase text-gray-400">Semester</label>
+                                                <select value={targetSem} onChange={(e) => setTargetSem(e.target.value)} className="w-full p-2.5 border rounded-lg bg-white">
+                                                    {[1,2,3,4,5,6,7,8].map(s => <option key={s} value={s}>{s} Sem</option>)}
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label className="text-[10px] font-black uppercase text-gray-400">Section</label>
+                                                <select value={targetSec} onChange={(e) => setTargetSec(e.target.value)} className="w-full p-2.5 border rounded-lg bg-white font-bold text-orange-600">
+                                                    <option value="A">A</option><option value="B">B</option><option value="C">C</option>
+                                                </select>
+                                            </div>
                                         </div>
-                                        <div>
-                                            <label className="text-[10px] font-black uppercase text-gray-400">Semester</label>
-                                            <select value={targetSem} onChange={(e) => setTargetSem(e.target.value)} className="w-full p-2.5 border rounded-lg bg-white">
-                                                {[1,2,3,4,5,6,7,8].map(s => <option key={s} value={s}>{s} Sem</option>)}
-                                            </select>
-                                        </div>
-                                        <div>
-                                            <label className="text-[10px] font-black uppercase text-gray-400">Section</label>
-                                            <select value={targetSec} onChange={(e) => setTargetSec(e.target.value)} className="w-full p-2.5 border rounded-lg bg-white font-bold text-orange-600">
-                                                <option value="A">A</option><option value="B">B</option><option value="C">C</option>
-                                            </select>
-                                        </div>
-                                    </div>
 
-                                    <div className="flex flex-col gap-1">
-                                        <label className="text-[10px] font-black uppercase text-gray-400">Select Arrear File (VH NO required)</label>
-                                        <input 
-                                            type="file" 
-                                            accept=".csv, .xlsx" 
-                                            onChange={(e) => setArrearFile(e.target.files?.[0] || null)}
-                                            className="p-3 border rounded-lg bg-white text-sm" 
-                                        />
-                                    </div>
+                                        <div className="flex flex-col gap-1">
+                                            <label className="text-[10px] font-black uppercase text-gray-400">Select Arrear File (VH NO required)</label>
+                                            <input 
+                                                type="file" 
+                                                accept=".csv, .xlsx" 
+                                                onChange={(e) => setArrearFile(e.target.files?.[0] || null)}
+                                                className="p-3 border rounded-lg bg-white text-sm" 
+                                            />
+                                        </div>
 
-                                    <button 
-                                        type="submit" 
-                                        disabled={isAnalyzing}
-                                        className="w-full bg-blue-900 text-white py-3 rounded-xl font-bold hover:bg-blue-800 shadow-lg disabled:bg-gray-400"
-                                    >
-                                        {isAnalyzing ? "Analyzing Data..." : "Process & Preview Data"}
-                                    </button>
-                                </form>
-                            ) : (
-                                <div className="space-y-6">
-                                    <div className="flex justify-between items-center">
-                                        <button onClick={() => setArrearPreview(null)} className="text-gray-500 flex items-center gap-2 font-bold hover:text-blue-600">
-                                            <ArrowLeft size={18} /> Back to Upload
+                                        <button 
+                                            type="submit" 
+                                            disabled={isAnalyzing}
+                                            className="w-full bg-blue-900 text-white py-3 rounded-xl font-bold hover:bg-blue-800 shadow-lg disabled:bg-gray-400"
+                                        >
+                                            {isAnalyzing ? "Analyzing Data..." : "Process & Preview Data"}
                                         </button>
-                                        <div className="text-right">
-                                            <p className="text-[10px] font-black uppercase text-gray-400">Target Class</p>
-                                            <p className="font-bold text-blue-900">Year {targetYear} - Sem {targetSem} - Sec {targetSec}</p>
+                                    </form>
+                                ) : (
+                                    <div className="space-y-6">
+                                        <div className="flex justify-between items-center">
+                                            <button onClick={() => setArrearPreview(null)} className="text-gray-500 flex items-center gap-2 font-bold hover:text-blue-600">
+                                                <ArrowLeft size={18} /> Back to Upload
+                                            </button>
+                                            <div className="text-right">
+                                                <p className="text-[10px] font-black uppercase text-gray-400">Target Class</p>
+                                                <p className="font-bold text-blue-900">Year {targetYear} - Sem {targetSem} - Sec {targetSec}</p>
+                                            </div>
                                         </div>
-                                    </div>
 
-                                    <div className="overflow-x-auto border rounded-xl max-h-[400px]">
-                                        <table className="w-full text-left">
-                                            <thead className="bg-gray-100 sticky top-0 text-[10px] font-black uppercase text-gray-500">
-                                                <tr>
-                                                    <th className="p-4">VH NO</th>
-                                                    <th className="p-4">Mapped Name</th>
-                                                    <th className="p-4">Subject</th>
-                                                    <th className="p-4">Status</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody className="divide-y text-sm">
-                                                {arrearPreview.map((row, idx) => (
-                                                    <tr key={idx} className={row.is_valid ? "bg-white" : "bg-red-50"}>
-                                                        <td className="p-4 font-mono font-bold text-blue-600">{row.vh_no}</td>
-                                                        <td className="p-4 font-bold">{row.name}</td>
-                                                        <td className="p-4">{row.subject_code} - {row.subject_name}</td>
-                                                        <td className="p-4">
-                                                            <span className={`px-2 py-1 rounded text-[10px] font-black ${row.is_valid ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                                                                {row.status}
-                                                            </span>
-                                                        </td>
+                                        <div className="overflow-x-auto border rounded-xl max-h-[400px]">
+                                            <table className="w-full text-left">
+                                                <thead className="bg-gray-100 sticky top-0 text-[10px] font-black uppercase text-gray-500">
+                                                    <tr>
+                                                        <th className="p-4">VH NO</th>
+                                                        <th className="p-4">Mapped Name</th>
+                                                        <th className="p-4">Subject</th>
+                                                        <th className="p-4">Status</th>
                                                     </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    </div>
+                                                </thead>
+                                                <tbody className="divide-y text-sm">
+                                                    {arrearPreview.map((row, idx) => (
+                                                        <tr key={idx} className={row.is_valid ? "bg-white" : "bg-red-50"}>
+                                                            <td className="p-4 font-mono font-bold text-blue-600">{row.vh_no}</td>
+                                                            <td className="p-4 font-bold">{row.name}</td>
+                                                            <td className="p-4">{row.subject_code} - {row.subject_name}</td>
+                                                            <td className="p-4">
+                                                                <span className={`px-2 py-1 rounded text-[10px] font-black ${row.is_valid ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                                                                    {row.status}
+                                                                </span>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
 
-                                    <button 
-                                        onClick={handleConfirmArrearUpload}
-                                        className="w-full bg-green-600 text-white py-4 rounded-xl font-black uppercase tracking-widest hover:bg-green-700 shadow-xl transition-all flex items-center justify-center gap-3"
-                                    >
-                                        <Send size={20} /> Confirm Upload & Notify Students
-                                    </button>
+                                        <button 
+                                            onClick={handleConfirmArrearUpload}
+                                            className="w-full bg-green-600 text-white py-4 rounded-xl font-black uppercase tracking-widest hover:bg-green-700 shadow-xl transition-all flex items-center justify-center gap-3"
+                                        >
+                                            <Send size={20} /> Confirm Upload & Notify Students
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Right Column: Uploaded Arrear Files Panel */}
+                            <div className="lg:border-l lg:pl-12">
+                                <h2 className="text-xl font-bold mb-2 uppercase tracking-tighter flex items-center gap-2">
+                                    <FileText className="text-red-600" size={24} /> Uploaded Arrear Files
+                                </h2>
+                                <p className="text-[10px] text-gray-400 font-bold mb-6 uppercase tracking-wider italic">
+                                    * Deleting a file will remove all arrear records imported from it.
+                                </p>
+                                
+                                <div className="space-y-3 max-h-[600px] overflow-y-auto pr-2">
+                                    {uploadedArrearFiles.length > 0 ? uploadedArrearFiles.map((file: any) => (
+                                        <div key={file.filename} className="p-4 border border-red-100 rounded-xl bg-red-50/30 flex justify-between items-center group hover:bg-white transition-all shadow-sm">
+                                            <div className="overflow-hidden">
+                                                <p className="font-bold text-red-900 truncate">{file.filename}</p>
+                                                <p className="text-[10px] text-gray-500 font-mono truncate mt-1">
+                                                    Uploaded: {new Date(file.uploaded_at * 1000).toLocaleString()}
+                                                </p>
+                                            </div>
+                                            <button 
+                                                onClick={() => handleDeleteArrearFile(file.filename)} 
+                                                className="p-3 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0"
+                                                title="Delete File and Associated Records"
+                                            >
+                                                <Trash2 size={18} />
+                                            </button>
+                                        </div>
+                                    )) : (
+                                        <div className="text-center py-16 border-2 border-dashed border-gray-200 rounded-2xl bg-gray-50/50">
+                                            <FileText className="mx-auto text-gray-300 mb-3" size={40} />
+                                            <p className="text-gray-400 italic text-sm">No arrear files currently managed.</p>
+                                        </div>
+                                    )}
                                 </div>
-                            )}
+                            </div>
                         </div>
                     )}
 

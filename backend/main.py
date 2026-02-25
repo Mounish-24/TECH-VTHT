@@ -269,8 +269,18 @@ async def bulk_upload_users(role: str, file: UploadFile = File(...), db: Session
     
     contents = await file.read()
     decoded = contents.decode('utf-8')
-    reader = csv.DictReader(io.StringIO(decoded))
     
+    # 🌟 NEW: Save the file to track it for the UI panel and future deletion
+    timestamp = int(time.time())
+    safe_filename = file.filename.replace(" ", "_")
+    saved_filename = f"bulk_{timestamp}_{role}_{safe_filename}"
+    file_path = os.path.join(UPLOAD_DIR, saved_filename)
+    
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(decoded)
+    # ----------------------------------------------------
+
+    reader = csv.DictReader(io.StringIO(decoded))
     success_count = 0
     errors = []
 
@@ -278,6 +288,7 @@ async def bulk_upload_users(role: str, file: UploadFile = File(...), db: Session
         try:
             uid = row.get('id') or row.get('roll_no') or row.get('staff_no')
             if not uid: continue
+            uid = str(uid).strip()
 
             if db.query(models.User).filter(models.User.id == uid).first():
                 errors.append(f"ID {uid} already exists")
@@ -327,7 +338,72 @@ async def bulk_upload_users(role: str, file: UploadFile = File(...), db: Session
             errors.append(f"Error at row {uid if 'uid' in locals() else 'unknown'}: {str(e)}")
 
     db.commit()
-    return {"message": f"Successfully uploaded {success_count} users", "errors": errors}
+    return {
+        "message": f"Successfully uploaded {success_count} users", 
+        "errors": errors,
+        "file_id": saved_filename # Matches the frontend expectation
+    }
+
+# 🌟 NEW ENDPOINT: Fetches all uploaded CSV files for the Admin Panel UI
+@app.get("/admin/bulk-upload/files")
+def get_uploaded_csv_files():
+    files_list = []
+    if not os.path.exists(UPLOAD_DIR):
+        return files_list
+        
+    for filename in os.listdir(UPLOAD_DIR):
+        if filename.startswith("bulk_") and filename.endswith(".csv"):
+            # Parse filename format: bulk_{timestamp}_{role}_{original_name}
+            parts = filename.split("_", 3)
+            if len(parts) >= 4:
+                try:
+                    uploaded_at = int(parts[1])
+                    role = parts[2]
+                    files_list.append({
+                        "filename": filename,
+                        "role": role,
+                        "uploaded_at": uploaded_at
+                    })
+                except ValueError:
+                    continue
+                    
+    # Sort by newest first
+    files_list.sort(key=lambda x: x["uploaded_at"], reverse=True)
+    return files_list
+
+# 🌟 NEW ENDPOINT: Deletes the CSV file AND all users inside it
+@app.delete("/admin/bulk-upload/file/{filename}")
+def delete_bulk_csv(filename: str, db: Session = Depends(get_db)):
+    file_path = os.path.join(UPLOAD_DIR, filename)
+    
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="CSV file not found on server")
+        
+    try:
+        # 1. Read the file to find out WHICH users to delete
+        with open(file_path, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                uid = row.get('id') or row.get('roll_no') or row.get('staff_no')
+                if uid:
+                    uid = str(uid).strip()
+                    # Delete associated data
+                    db.query(models.AcademicData).filter(models.AcademicData.student_roll_no == uid).delete(synchronize_session=False)
+                    db.query(models.Student).filter(models.Student.roll_no == uid).delete(synchronize_session=False)
+                    db.query(models.Course).filter(models.Course.faculty_id == uid).update({"faculty_id": None}, synchronize_session=False)
+                    db.query(models.Faculty).filter(models.Faculty.staff_no == uid).delete(synchronize_session=False)
+                    db.query(models.User).filter(models.User.id == uid).delete(synchronize_session=False)
+        
+        db.commit()
+        
+        # 2. Delete the physical file from the server
+        os.remove(file_path)
+        
+        return {"message": "File and associated users deleted successfully"}
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error undoing CSV upload: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/admin/courses")
 def add_course(course: schemas.CourseCreate, db: Session = Depends(get_db)):
@@ -468,6 +544,17 @@ async def upload_arrears(file: UploadFile = File(...), db: Session = Depends(get
     
     try:
         contents = await file.read()
+        
+        # 🌟 NEW: Save the physical file so the UI can list it and delete it later
+        timestamp = int(time.time())
+        safe_filename = file.filename.replace(" ", "_")
+        saved_filename = f"arrear_{timestamp}_{safe_filename}"
+        file_path = os.path.join(UPLOAD_DIR, saved_filename)
+        
+        with open(file_path, "wb") as f:
+            f.write(contents)
+        # -------------------------------------------------------------------------
+            
         if file.filename.endswith('.csv'):
             df = pd.read_csv(io.BytesIO(contents))
         else:
@@ -494,12 +581,77 @@ async def upload_arrears(file: UploadFile = File(...), db: Session = Depends(get
             success_count += 1
             
         db.commit()
-        return {"message": f"Successfully uploaded {success_count} arrear records."}
+        return {
+            "message": f"Successfully uploaded {success_count} arrear records.",
+            "file_id": saved_filename
+        }
         
     except Exception as e:
         db.rollback()
         logger.error(f"Arrear upload error: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to process file: {str(e)}")
+
+# 🌟 NEW ENDPOINT: Fetches all uploaded Arrear files for the Admin Panel UI
+@app.get("/admin/arrears/files")
+def get_uploaded_arrear_files():
+    files_list = []
+    if not os.path.exists(UPLOAD_DIR):
+        return files_list
+        
+    for filename in os.listdir(UPLOAD_DIR):
+        if filename.startswith("arrear_") and (filename.endswith(".csv") or filename.endswith(".xlsx")):
+            parts = filename.split("_", 2)
+            if len(parts) >= 3:
+                try:
+                    uploaded_at = int(parts[1])
+                    files_list.append({
+                        "filename": filename,
+                        "uploaded_at": uploaded_at
+                    })
+                except ValueError:
+                    continue
+                    
+    files_list.sort(key=lambda x: x["uploaded_at"], reverse=True)
+    return files_list
+
+# 🌟 NEW ENDPOINT: Deletes the Arrear file AND all records inside it
+@app.delete("/admin/arrears/file/{filename}")
+def delete_arrear_file(filename: str, db: Session = Depends(get_db)):
+    file_path = os.path.join(UPLOAD_DIR, filename)
+    
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found on server")
+        
+    try:
+        # 1. Read the file to find out WHICH student arrears to delete
+        if filename.endswith('.csv'):
+            df = pd.read_csv(file_path)
+        else:
+            df = pd.read_excel(file_path)
+            
+        df.columns = [str(c).strip().upper() for c in df.columns]
+        vh_col = next((c for c in df.columns if "VH NO" in c or "REG NO" in c or "VHNO" in c), None)
+        
+        if vh_col:
+            for _, row in df.iterrows():
+                reg_no = str(row.get(vh_col)).strip()
+                subj_code = str(row.get('SUBJECT CODE', 'N/A')).strip().upper()
+                if reg_no and reg_no.lower() != 'nan':
+                    # Delete the specific arrear matching this roll_no and subject
+                    db.query(models.Arrear).filter(
+                        models.Arrear.roll_no == reg_no,
+                        models.Arrear.subject_code == subj_code
+                    ).delete(synchronize_session=False)
+        
+        db.commit()
+        
+        # 2. Delete the physical file from the server
+        os.remove(file_path)
+        return {"message": "Arrear file and associated records deleted successfully"}
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error deleting arrear file: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/student/arrears/{roll_no}")
 def get_student_arrears(roll_no: str, db: Session = Depends(get_db)):
@@ -1107,3 +1259,37 @@ def get_faculty_performance(db: Session = Depends(get_db)):
 def debug_all_materials(db: Session = Depends(get_db)):
     materials = db.query(models.Material).all()
     return {"total": len(materials), "materials": [{"id": m.id, "code": m.course_code, "type": m.type, "title": m.title} for m in materials]}
+
+    # --- CLASS ADVISOR UI ENDPOINTS ---
+@app.get("/advisors")
+def get_all_advisors(db: Session = Depends(get_db)):
+    """Fetches all assigned class advisors for the Admin Panel"""
+    # Look up all advisor records
+    # (Assuming your models.py has a ClassAdvisor model; adapt the model name if slightly different)
+    advisors = db.query(models.ClassAdvisor).all() if hasattr(models, 'ClassAdvisor') else []
+    
+    result = []
+    for adv in advisors:
+        # Find the faculty's name to display in the UI
+        faculty = db.query(models.Faculty).filter(models.Faculty.staff_no == adv.faculty_id).first()
+        result.append({
+            "advisor_no": adv.advisor_no,
+            "faculty_id": adv.faculty_id,
+            "faculty_name": faculty.name if faculty else "Unknown Faculty",
+            "year": adv.year,
+            "semester": adv.semester,
+            "section": adv.section
+        })
+    return result
+
+@app.delete("/advisors/{advisor_no}")
+def delete_advisor(advisor_no: str, db: Session = Depends(get_db)):
+    """Deletes a class advisor assignment"""
+    if hasattr(models, 'ClassAdvisor'):
+        adv = db.query(models.ClassAdvisor).filter(models.ClassAdvisor.advisor_no == advisor_no).first()
+        if not adv:
+            raise HTTPException(status_code=404, detail="Advisor not found")
+        db.delete(adv)
+        db.commit()
+        return {"message": "Advisor assignment removed successfully"}
+    raise HTTPException(status_code=500, detail="Advisor model not found")

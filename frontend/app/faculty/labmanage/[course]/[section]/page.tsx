@@ -7,7 +7,7 @@ import Navbar from '@/components/Navbar';
 import Footer from '@/components/Footer';
 import { 
     Save, FileUp, UserCheck, ArrowLeft, Search, Loader2, 
-    Megaphone, Beaker, Trash2, Upload, BookOpen
+    Megaphone, Beaker, Trash2, Upload, BookOpen, Clock
 } from 'lucide-react';
 
 export default function LabManagementPage() {
@@ -24,13 +24,15 @@ export default function LabManagementPage() {
     const [activeAction, setActiveAction] = useState('attendance');
     const [isSaving, setIsSaving] = useState(false);
     const [uploading, setUploading] = useState(false);
+    
+    // --- Notice States ---
     const [labAnnouncement, setLabAnnouncement] = useState({ title: '', content: '' });
+    const [labNotices, setLabNotices] = useState<any[]>([]); // 🌟 NEW STATE for the panel
 
     // --- 1. INITIAL FETCH ---
     useEffect(() => {
         const fetchData = async () => {
             try {
-                // We must pass both course_code and section to match the AcademicData join logic
                 const res = await axios.get(`${API_URL}/marks/section?course_code=${courseCode}&section=${sectionName}`);
                 setStudents(res.data);
                 setFilteredStudents(res.data);
@@ -42,11 +44,10 @@ export default function LabManagementPage() {
         fetchManuals();
     }, [courseCode, sectionName]);
 
-    // --- 2. MANUALS FETCH LOGIC ---
+    // --- 2. MANUALS & NOTICES FETCH LOGIC ---
     const fetchManuals = async () => {
         try {
             const res = await axios.get(`${API_URL}/materials/${courseCode}`);
-            // Filter only Lab Manuals for this lab course
             const labManuals = res.data.filter((m: any) => m.type === 'Lab Manual');
             setUploadedManuals(labManuals);
         } catch (e) {
@@ -54,8 +55,23 @@ export default function LabManagementPage() {
         }
     };
 
+    // 🌟 NEW FUNCTION: Fetch lab specific notices
+    const fetchLabNotices = async () => {
+        try {
+            const res = await axios.get(`${API_URL}/announcements?course_code=${courseCode}&section=${sectionName}`);
+            // Filter to ensure we only show Lab announcements here
+            const filtered = res.data.filter((ann: any) => ann.type === 'Lab');
+            setLabNotices(filtered);
+        } catch (err) {
+            console.error("Error loading lab notices");
+        }
+    };
+
     useEffect(() => {
-        if (activeAction === 'manuals') fetchManuals();
+        if (activeAction === 'manuals') {
+            fetchManuals();
+            fetchLabNotices(); // 🌟 ADDED
+        }
     }, [activeAction]);
 
     // --- 3. DELETE MANUAL LOGIC ---
@@ -65,6 +81,17 @@ export default function LabManagementPage() {
             await axios.delete(`${API_URL}/materials/${id}`);
             alert("🗑️ Lab manual removed!");
             fetchManuals();
+        } catch (error) {
+            alert("Delete failed.");
+        }
+    };
+
+    // 🌟 NEW FUNCTION: Delete Notice Logic
+    const handleDeleteNotice = async (id: number) => {
+        if (!confirm("⚠️ Are you sure you want to delete this notice?")) return;
+        try {
+            await axios.delete(`${API_URL}/announcements/${id}`);
+            fetchLabNotices(); // Refresh the panel
         } catch (error) {
             alert("Delete failed.");
         }
@@ -144,30 +171,29 @@ export default function LabManagementPage() {
         }
     };
 
-    // --- 7. LAB ANNOUNCEMENT POST (UPDATED) ---
-// --- 7. LAB ANNOUNCEMENT POST (UPDATED) ---
+    // --- 7. LAB ANNOUNCEMENT POST ---
     const handlePostLabAnnouncement = async (e: React.FormEvent) => {
         e.preventDefault();
-        
         try {
             await axios.post(`${API_URL}/announcements`, {
                 title: labAnnouncement.title,
                 content: labAnnouncement.content,
                 type: "Lab", 
-                // 🌟 FIX 1: Decode and format the course code perfectly (e.g., "21AD32A (LAB)")
                 course_code: decodeURIComponent(courseCode).trim().toUpperCase(), 
                 section: sectionName, 
-                // 🌟 FIX 2: Explicitly tag this so the backend knows it belongs to Students
                 audience: "Student", 
                 posted_by: localStorage.getItem('user_id') || "Faculty"
             });
-            alert(`🔬 Lab notice broadcasted successfully!`);
+            alert(`📢 Lab notice broadcasted successfully!`);
             setLabAnnouncement({ title: '', content: '' });
+            fetchLabNotices(); // 🌟 Refresh the list instantly
         } catch (error) {
             console.error("Announcement Error:", error);
             alert("Broadcast failed. Check console for details.");
         }
-    };return (
+    };
+
+    return (
         <div className="min-h-screen flex flex-col bg-gray-50">
             <Navbar />
             <div className="container mx-auto px-4 py-8 flex-grow">
@@ -246,7 +272,7 @@ export default function LabManagementPage() {
                     </div>
                 )}
 
-                {/* TAB 2: LAB MANUALS MANAGEMENT */}
+                {/* TAB 2: LAB MANUALS & NOTICES MANAGEMENT */}
                 {activeAction === 'manuals' && (
                     <div className="space-y-8 animate-in fade-in duration-500">
                         {/* UPLOAD LAB MANUAL CARD */}
@@ -337,37 +363,74 @@ export default function LabManagementPage() {
                             </div>
                         </div>
 
-                        {/* LAB ANNOUNCEMENT FORM */}
-                        <div className="bg-white p-8 rounded-xl shadow-md border-l-4 border-blue-900">
-                            <h2 className="text-xl font-bold text-blue-900 mb-6 flex items-center gap-2">
-                                <Megaphone className="text-orange-500" /> Post Lab Announcement
-                            </h2>
-                            <form onSubmit={handlePostLabAnnouncement} className="space-y-6">
-                                <div>
-                                    <label className="block text-sm font-bold text-gray-700 mb-2">Announcement Title</label>
-                                    <input 
-                                        className="w-full p-4 border-2 border-gray-200 rounded-lg outline-none focus:border-blue-500"
-                                        placeholder="e.g., Lab Schedule Change" 
-                                        value={labAnnouncement.title} 
-                                        onChange={(e) => setLabAnnouncement({ ...labAnnouncement, title: e.target.value })} 
-                                        required 
-                                    />
+                        {/* 🌟 2-COLUMN GRID FOR NOTICES */}
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            
+                            {/* LAB ANNOUNCEMENT FORM */}
+                            <div className="bg-white p-8 rounded-xl shadow-md border-t-4 border-orange-500">
+                                <h2 className="text-xl font-bold text-blue-900 mb-6 flex items-center gap-2">
+                                    <Megaphone className="text-orange-500" /> Post Lab Announcement
+                                </h2>
+                                <form onSubmit={handlePostLabAnnouncement} className="space-y-6">
+                                    <div>
+                                        <label className="block text-sm font-bold text-gray-700 mb-2">Announcement Title</label>
+                                        <input 
+                                            className="w-full p-4 border-2 border-gray-200 rounded-lg outline-none focus:border-blue-500"
+                                            placeholder="e.g., Lab Schedule Change" 
+                                            value={labAnnouncement.title} 
+                                            onChange={(e) => setLabAnnouncement({ ...labAnnouncement, title: e.target.value })} 
+                                            required 
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-bold text-gray-700 mb-2">Details</label>
+                                        <textarea 
+                                            className="w-full p-4 border-2 border-gray-200 rounded-lg outline-none focus:border-blue-500 h-32"
+                                            placeholder="Instructions for students..." 
+                                            value={labAnnouncement.content} 
+                                            onChange={(e) => setLabAnnouncement({ ...labAnnouncement, content: e.target.value })} 
+                                            required 
+                                        />
+                                    </div>
+                                    <button type="submit" className="w-full bg-blue-900 text-white py-3 rounded-lg font-bold text-lg hover:bg-blue-800 transition shadow-md">
+                                        Broadcast Lab Announcement
+                                    </button>
+                                </form>
+                            </div>
+
+                            {/* VIEW RECENT LAB NOTICES */}
+                            <div className="bg-white p-8 rounded-xl shadow-md border-t-4 border-blue-500">
+                                <h2 className="text-xl font-bold text-blue-900 mb-6 flex items-center gap-2">
+                                    <Clock className="text-blue-500" /> Recent Lab Notices
+                                </h2>
+                                <div className="space-y-4 max-h-[350px] overflow-y-auto pr-2 no-scrollbar">
+                                    {labNotices.length > 0 ? labNotices.map((ann) => (
+                                        <div key={ann.id} className="p-4 border rounded-xl bg-gray-50 flex justify-between items-start group hover:bg-white transition-all shadow-sm relative overflow-hidden">
+                                            <div className="flex-grow">
+                                                <span className="text-[8px] font-black uppercase px-2 py-0.5 rounded-full mb-2 inline-block bg-blue-100 text-blue-700">
+                                                    Lab Notice
+                                                </span>
+                                                <p className="font-bold text-blue-900 text-sm">{ann.title}</p>
+                                                <p className="text-xs text-gray-500 line-clamp-2 mt-1">{ann.content}</p>
+                                            </div>
+                                            <button 
+                                                onClick={() => handleDeleteNotice(ann.id)} 
+                                                className="p-2 text-gray-300 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                                                title="Delete Notice"
+                                            >
+                                                <Trash2 size={18} />
+                                            </button>
+                                        </div>
+                                    )) : (
+                                        <div className="text-center py-12 border-2 border-dashed border-gray-200 rounded-2xl bg-gray-50/50">
+                                            <Megaphone className="mx-auto text-gray-300 mb-2" size={32} />
+                                            <p className="text-gray-400 italic text-sm">No active lab notices.</p>
+                                        </div>
+                                    )}
                                 </div>
-                                <div>
-                                    <label className="block text-sm font-bold text-gray-700 mb-2">Details</label>
-                                    <textarea 
-                                        className="w-full p-4 border-2 border-gray-200 rounded-lg outline-none focus:border-blue-500 h-32"
-                                        placeholder="Instructions for students..." 
-                                        value={labAnnouncement.content} 
-                                        onChange={(e) => setLabAnnouncement({ ...labAnnouncement, content: e.target.value })} 
-                                        required 
-                                    />
-                                </div>
-                                <button type="submit" className="w-full bg-blue-900 text-white py-3 rounded-lg font-bold text-lg hover:bg-blue-800 transition shadow-md">
-                                    Broadcast Lab Announcement
-                                </button>
-                            </form>
+                            </div>
                         </div>
+
                     </div>
                 )}
             </div>

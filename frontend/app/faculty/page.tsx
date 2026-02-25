@@ -7,7 +7,7 @@ import Navbar from '@/components/Navbar';
 import Footer from '@/components/Footer';
 import { 
     BookOpen, ChevronRight, Megaphone, Beaker, Bell, 
-    Camera, FileText, UserCheck, Activity
+    Camera, FileText, UserCheck, Activity, Trash2, Clock
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
@@ -16,6 +16,7 @@ export default function FacultyDashboard() {
     const [theoryCourses, setTheoryCourses] = useState<any[]>([]);
     const [labCourses, setLabCourses] = useState<any[]>([]);
     const [announcements, setAnnouncements] = useState<any[]>([]);
+    const [myAnnouncements, setMyAnnouncements] = useState<any[]>([]); // 🌟 NEW STATE: For the faculty's own posts
     const [newAnnouncement, setNewAnnouncement] = useState({ title: '', content: '', section: 'All' });
     const [message, setMessage] = useState('');
     const [latestReport, setLatestReport] = useState<any>(null);
@@ -59,12 +60,15 @@ export default function FacultyDashboard() {
                 setTheoryCourses(assignedCourses.filter((c: any) => !c.title.includes('(Lab)')));
                 setLabCourses(assignedCourses.filter((c: any) => c.title.includes('(Lab)')));
 
-                // 4. Fetch Targeted Announcements (New Audience-based logic)
-                // Faculty audience fetches: Global + Faculty-targeted notices
+                // 4. Fetch Targeted Announcements (Admin -> Faculty notices)
                 const annRes = await axios.get(`${API_URL}/announcements?audience=Faculty`);
                 setAnnouncements(annRes.data);
 
-                // 5. Fetch latest progress report
+                // 5. Fetch Faculty's OWN Announcements (Faculty -> Student notices)
+                // We will add this backend endpoint in the next step!
+                fetchMyAnnouncements(facultyData.name); 
+
+                // 6. Fetch latest progress report
                 const { data: progressData } = await supabase
                     .from('faculty_progress_reports')
                     .select('pdf_url')
@@ -78,6 +82,18 @@ export default function FacultyDashboard() {
         };
         fetchData();
     }, [router]);
+
+    // 🌟 NEW FUNCTION: Fetch announcements posted by THIS specific faculty
+    const fetchMyAnnouncements = async (facultyName: string) => {
+        try {
+            // Temporary catch block so it doesn't crash until the backend is updated
+            const res = await axios.get(`${API_URL}/announcements/faculty-posts?posted_by=${encodeURIComponent(facultyName)}`);
+            setMyAnnouncements(res.data);
+        } catch (err) {
+            console.log("My announcements endpoint not ready yet.");
+            setMyAnnouncements([]);
+        }
+    };
 
     const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files[0]) {
@@ -103,7 +119,6 @@ export default function FacultyDashboard() {
     const handlePostAnnouncement = async (e: React.FormEvent) => {
         e.preventDefault();
         try {
-            // Updated to use standardized Targeted logic
             await axios.post(`${API_URL}/announcements`, {
                 title: newAnnouncement.title,
                 content: newAnnouncement.content,
@@ -114,9 +129,24 @@ export default function FacultyDashboard() {
             });
             setMessage("Announcement broadcasted successfully!");
             setNewAnnouncement({ title: '', content: '', section: 'All' });
+            
+            // Instantly refresh the "My Recent Broadcasts" panel
+            fetchMyAnnouncements(faculty.name); 
+            
             setTimeout(() => setMessage(''), 3000);
         } catch { 
             setMessage("Failed to broadcast announcement."); 
+        }
+    };
+
+    // 🌟 NEW FUNCTION: Delete a faculty's own announcement
+    const handleDeleteAnnouncement = async (id: number) => {
+        if (!confirm("Are you sure you want to delete this announcement?")) return;
+        try {
+            await axios.delete(`${API_URL}/announcements/${id}`);
+            fetchMyAnnouncements(faculty.name);
+        } catch (error) {
+            alert("Failed to delete announcement.");
         }
     };
 
@@ -213,27 +243,59 @@ export default function FacultyDashboard() {
                             </div>
                         </div>
 
-                        {/* Announcement Section */}
-                        <div className="bg-white p-6 rounded-2xl shadow-sm border-t-4 border-orange-500">
-                            <h2 className="text-xl font-bold text-blue-900 mb-4 flex items-center gap-2"><Megaphone className="text-orange-500" /> Targeted Student Broadcast</h2>
-                            {message && <p className="mb-4 p-2 bg-green-100 text-green-700 rounded-lg text-xs text-center font-bold">{message}</p>}
-                            <form onSubmit={handlePostAnnouncement} className="space-y-4">
-                                <div className="grid grid-cols-2 gap-4">
-                                    <input className="p-3 border rounded-xl outline-none text-sm focus:border-blue-500 shadow-sm" placeholder="Notice Heading" value={newAnnouncement.title} onChange={(e) => setNewAnnouncement({ ...newAnnouncement, title: e.target.value })} required />
-                                    <select value={newAnnouncement.section} onChange={(e) => setNewAnnouncement({ ...newAnnouncement, section: e.target.value })} className="p-3 border rounded-xl bg-gray-50 text-sm focus:border-blue-500 shadow-sm font-medium">
+                        {/* Announcement Grid (Post & View) */}
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            
+                            {/* POST Announcement Section */}
+                            <div className="bg-white p-6 rounded-2xl shadow-sm border-t-4 border-orange-500">
+                                <h2 className="text-xl font-bold text-blue-900 mb-4 flex items-center gap-2"><Megaphone className="text-orange-500" /> Broadcast Notice</h2>
+                                {message && <p className="mb-4 p-2 bg-green-100 text-green-700 rounded-lg text-xs text-center font-bold">{message}</p>}
+                                <form onSubmit={handlePostAnnouncement} className="space-y-4">
+                                    <input className="w-full p-3 border rounded-xl outline-none text-sm focus:border-blue-500 shadow-sm" placeholder="Notice Heading" value={newAnnouncement.title} onChange={(e) => setNewAnnouncement({ ...newAnnouncement, title: e.target.value })} required />
+                                    <select value={newAnnouncement.section} onChange={(e) => setNewAnnouncement({ ...newAnnouncement, section: e.target.value })} className="w-full p-3 border rounded-xl bg-gray-50 text-sm focus:border-blue-500 shadow-sm font-medium">
                                         <option value="All">All Students</option>
                                         <option value="A">Section A Only</option>
                                         <option value="B">Section B Only</option>
                                         <option value="C">Section C Only</option>
                                     </select>
+                                    <textarea className="w-full p-3 border rounded-xl outline-none h-24 text-sm focus:border-blue-500 shadow-sm" placeholder="Enter detailed message for students..." value={newAnnouncement.content} onChange={(e) => setNewAnnouncement({ ...newAnnouncement, content: e.target.value })} required />
+                                    <button type="submit" className="w-full bg-blue-900 text-white font-bold py-3 rounded-xl hover:bg-blue-800 transition-all text-sm shadow-md">Post to Dashboard</button>
+                                </form>
+                            </div>
+
+                            {/* VIEW My Broadcasts Section */}
+                            <div className="bg-white p-6 rounded-2xl shadow-sm border-t-4 border-blue-500">
+                                <h2 className="text-xl font-bold text-blue-900 mb-4 flex items-center gap-2"><Clock className="text-blue-500" /> My Recent Broadcasts</h2>
+                                <div className="space-y-3 max-h-[350px] overflow-y-auto pr-2 no-scrollbar">
+                                    {myAnnouncements.length > 0 ? myAnnouncements.map((ann) => (
+                                        <div key={ann.id} className="p-4 border rounded-xl bg-gray-50 flex justify-between items-start group hover:bg-white transition-all shadow-sm relative overflow-hidden">
+                                            <div className="flex-grow">
+                                                <span className="text-[8px] font-black uppercase px-2 py-0.5 rounded-full mb-2 inline-block bg-blue-100 text-blue-700">
+                                                    Target: Section {ann.section}
+                                                </span>
+                                                <p className="font-bold text-blue-900 text-sm">{ann.title}</p>
+                                                <p className="text-xs text-gray-500 line-clamp-2 mt-1">{ann.content}</p>
+                                            </div>
+                                            <button 
+                                                onClick={() => handleDeleteAnnouncement(ann.id)} 
+                                                className="p-2 text-gray-300 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                                                title="Delete Announcement"
+                                            >
+                                                <Trash2 size={16} />
+                                            </button>
+                                        </div>
+                                    )) : (
+                                        <div className="text-center py-10 border-2 border-dashed border-gray-200 rounded-2xl bg-gray-50/50">
+                                            <Megaphone className="mx-auto text-gray-300 mb-2" size={32} />
+                                            <p className="text-gray-400 italic text-xs">No active broadcasts.</p>
+                                        </div>
+                                    )}
                                 </div>
-                                <textarea className="w-full p-3 border rounded-xl outline-none h-24 text-sm focus:border-blue-500 shadow-sm" placeholder="Enter detailed message for students..." value={newAnnouncement.content} onChange={(e) => setNewAnnouncement({ ...newAnnouncement, content: e.target.value })} required />
-                                <button type="submit" className="w-full bg-blue-900 text-white font-bold py-3 rounded-xl hover:bg-blue-800 transition-all text-sm shadow-md">Post to Student Dashboards</button>
-                            </form>
+                            </div>
+                            
                         </div>
 
                         {/* Quick Links Section */}
-                       {/* Quick Links Section */}
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 pb-12">
                             {/* Professional Smart Tracker Link */}
                             <div 

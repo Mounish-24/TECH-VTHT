@@ -247,18 +247,24 @@ export default function AdminDashboard() {
         } catch (err) { console.error("Error fetching links", err); }
     };
 
-    const fetchActiveAnnouncements = async () => {
+ const fetchActiveAnnouncements = async () => {
         try {
             const [studentRes, facultyRes] = await Promise.all([
                 axios.get(`${API_URL}/announcements?audience=Student`),
                 axios.get(`${API_URL}/announcements?audience=Faculty`)
             ]);
+            
             const allAnn = [...studentRes.data, ...facultyRes.data];
             const uniqueAnn = Array.from(new Map(allAnn.map(item => [item.id, item])).values());
-            setActiveAnnouncements(uniqueAnn.sort((a, b) => b.id - a.id));
-        } catch (err) { console.error("Error fetching announcements", err); }
+            
+            // 🌟 FIX: Filter the list to ONLY show announcements posted by 'Admin'
+            const adminOnlyAnnouncements = uniqueAnn.filter((ann: any) => ann.posted_by === 'Admin');
+            
+            setActiveAnnouncements(adminOnlyAnnouncements.sort((a, b) => b.id - a.id));
+        } catch (err) { 
+            console.error("Error fetching announcements", err); 
+        }
     };
-
     const fetchUploadedCSVs = async () => {
         try {
             const res = await axios.get(`${API_URL}/admin/bulk-upload/files`);

@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import axios from 'axios';
 import { API_URL } from '@/config';
@@ -8,7 +8,7 @@ import Footer from '@/components/Footer';
 import { 
     Save, FileUp, UserCheck, ArrowLeft, Search, Loader2, 
     Megaphone, BookOpen, FileText, ClipboardList, Beaker, Trash2,
-    Youtube, PlayCircle, RefreshCw, FileSpreadsheet, CheckCircle
+    Youtube, PlayCircle, RefreshCw, FileSpreadsheet, CheckCircle, Clock
 } from 'lucide-react';
 
 export default function SectionManagement() {
@@ -40,8 +40,9 @@ export default function SectionManagement() {
     const [excelPreview, setExcelPreview] = useState<any[]>([]);
     const [isProcessing, setIsProcessing] = useState(false);
 
-    // Form States
+    // --- Form & Notice States ---
     const [subAnn, setSubAnn] = useState({ title: '', content: '' });
+    const [subjectNotices, setSubjectNotices] = useState<any[]>([]); // 🌟 NEW STATE for the panel
     const [videoData, setVideoData] = useState({ title: '', url: '' });
     const [courseSubject, setCourseSubject] = useState('');
 
@@ -51,7 +52,6 @@ export default function SectionManagement() {
             const res = await axios.get(`${API_URL}/marks/section?course_code=${courseCode}&section=${sectionName}`);
             setStudents(res.data);
             setFilteredStudents(res.data);
-            // Capture the actual course subject from the first student's data
             if (res.data.length > 0 && res.data[0].subject) {
                 setCourseSubject(res.data[0].subject);
             }
@@ -82,7 +82,7 @@ export default function SectionManagement() {
                 topic_name: topicInput.trim()
             });
             setTopicInput(""); 
-            fetchSyllabusTopics(); // Refresh dropdown list
+            fetchSyllabusTopics(); 
         } catch (error) {
             alert("Failed to save topic.");
         } finally {
@@ -95,7 +95,7 @@ export default function SectionManagement() {
         if (!confirm("Remove this topic from current unit?")) return;
         try {
             await axios.delete(`${API_URL}/syllabus/topics/${topicId}`);
-            fetchSyllabusTopics(); // Refresh list
+            fetchSyllabusTopics(); 
         } catch (error) {
             alert("Failed to delete topic.");
         }
@@ -114,7 +114,7 @@ export default function SectionManagement() {
         }
     }, [courseCode, sectionName, selectedUnit]);
 
-    // --- 5. MATERIALS FETCH LOGIC ---
+    // --- 5. MATERIALS & NOTICES FETCH LOGIC ---
     const fetchMaterials = async () => {
         try {
             const res = await axios.get(`${API_URL}/materials/${courseCode}`);
@@ -124,17 +124,43 @@ export default function SectionManagement() {
         }
     };
 
+    // 🌟 NEW FUNCTION: Fetch subject specific notices
+    const fetchSubjectNotices = async () => {
+        try {
+            const res = await axios.get(`${API_URL}/announcements?course_code=${courseCode}&section=${sectionName}`);
+            // Filter to ensure we only show subject-specific announcements here
+            const filtered = res.data.filter((ann: any) => ann.type === 'Subject' || ann.type === 'Lab');
+            setSubjectNotices(filtered);
+        } catch (err) {
+            console.error("Error loading subject notices");
+        }
+    };
+
     useEffect(() => {
-        if (activeAction === 'uploads') fetchMaterials();
+        if (activeAction === 'uploads') {
+            fetchMaterials();
+            fetchSubjectNotices(); // 🌟 ADDED
+        }
     }, [activeAction]);
 
-    // --- 6. DELETE LOGIC ---
+    // --- 6. DELETE LOGIC (Materials & Notices) ---
     const handleDelete = async (id: number) => {
-        if (!confirm("⚠️ Are you sure?")) return;
+        if (!confirm("⚠️ Are you sure you want to delete this file?")) return;
         try {
             await axios.delete(`${API_URL}/materials/${id}`);
             alert("🗑️ Removed successfully!");
             fetchMaterials();
+        } catch (error) {
+            alert("Delete failed.");
+        }
+    };
+
+    // 🌟 NEW FUNCTION: Delete Notice
+    const handleDeleteNotice = async (id: number) => {
+        if (!confirm("⚠️ Are you sure you want to delete this notice?")) return;
+        try {
+            await axios.delete(`${API_URL}/announcements/${id}`);
+            fetchSubjectNotices(); // Refresh the panel
         } catch (error) {
             alert("Delete failed.");
         }
@@ -213,7 +239,7 @@ export default function SectionManagement() {
             alert("🚀 All marks from Excel synced to Database!");
             setExcelPreview([]);
             setSelectedFile(null);
-            fetchData(); // Refresh main table
+            fetchData(); 
             setActiveAction('marks');
         } catch (error) {
             alert("Bulk sync failed.");
@@ -222,7 +248,7 @@ export default function SectionManagement() {
         }
     };
 
-    // --- 10. UPLOAD LOGIC (FILES/VIDEOS) ---
+    // --- 10. UPLOAD LOGIC (FILES/VIDEOS/NOTICES) ---
     const handleFileUpload = async (type: string, titleId: string, fileInputId: string, isLectureNote: boolean = false) => {
         const fileInput = document.getElementById(fileInputId) as HTMLInputElement;
         const userId = localStorage.getItem('user_id');
@@ -277,20 +303,21 @@ export default function SectionManagement() {
         } catch (error) { alert("Failed to post video."); } finally { setUploading(false); }
     };
 
-const handlePostSubAnnouncement = async (e: React.FormEvent) => {
+    const handlePostSubAnnouncement = async (e: React.FormEvent) => {
         e.preventDefault();
         try {
             await axios.post(`${API_URL}/announcements`, {
                 title: subAnn.title,
                 content: subAnn.content,
                 type: "Subject", 
-                course_code: courseCode.trim().toUpperCase(), // Sends "21AD32A"
-                section: sectionName, // Sends "A"
-                audience: "Student", // Tags for students
+                course_code: courseCode.trim().toUpperCase(), 
+                section: sectionName, 
+                audience: "Student", 
                 posted_by: localStorage.getItem('user_id') 
             });
             alert(`📢 Notice broadcasted!`);
             setSubAnn({ title: '', content: '' });
+            fetchSubjectNotices(); // 🌟 Refresh the list instantly
         } catch (error) { alert("Failed to post."); }
     };
 
@@ -418,7 +445,7 @@ const handlePostSubAnnouncement = async (e: React.FormEvent) => {
                     </div>
                 )}
 
-                {/* TAB 2: EXCEL UPLOAD WORKFLOW (STEP 1) */}
+                {/* TAB 2: EXCEL UPLOAD WORKFLOW */}
                 {activeAction === 'excel' && (
                     <div className="bg-white p-8 rounded-xl shadow-md border-t-4 border-green-600 animate-in fade-in duration-500">
                         <div className="flex items-center gap-3 mb-6">
@@ -518,6 +545,7 @@ const handlePostSubAnnouncement = async (e: React.FormEvent) => {
                 {/* TAB 3: UPLOADS & NOTICES */}
                 {activeAction === 'uploads' && (
                     <div className="space-y-8 animate-in fade-in duration-500">
+                        
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                             {isLabCourse ? (
                                 <div className="bg-white p-6 rounded-xl shadow-md border-t-4 border-purple-600 col-span-full md:col-span-1 flex flex-col justify-between min-h-[400px]">
@@ -655,15 +683,51 @@ const handlePostSubAnnouncement = async (e: React.FormEvent) => {
                             </div>
                         </div>
 
-                        {/* POST NOTICE (Restored from code1) */}
-                        <div className="bg-white p-6 rounded-xl shadow-md border-l-4 border-blue-900">
-                            <h2 className="text-xl font-bold text-blue-900 mb-4 flex items-center gap-2"><Megaphone className="text-orange-500" /> Post Notice</h2>
-                            <form onSubmit={handlePostSubAnnouncement} className="space-y-4">
-                                <input className="w-full p-3 border rounded outline-none" placeholder="Title..." value={subAnn.title} onChange={(e) => setSubAnn({ ...subAnn, title: e.target.value })} required />
-                                <textarea className="w-full p-3 border rounded outline-none h-28" placeholder="Message details..." value={subAnn.content} onChange={(e) => setSubAnn({ ...subAnn, content: e.target.value })} required />
-                                <button type="submit" className="bg-blue-900 text-white px-8 py-2 rounded-lg font-bold hover:bg-blue-800 transition">Broadcast</button>
-                            </form>
+                        {/* 🌟 2-COLUMN GRID FOR NOTICES */}
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            {/* POST NOTICE FORM */}
+                            <div className="bg-white p-6 rounded-xl shadow-md border-t-4 border-orange-500">
+                                <h2 className="text-xl font-bold text-blue-900 mb-4 flex items-center gap-2"><Megaphone className="text-orange-500" /> Post Subject Notice</h2>
+                                <form onSubmit={handlePostSubAnnouncement} className="space-y-4">
+                                    <input className="w-full p-3 border rounded outline-none text-sm" placeholder="Title..." value={subAnn.title} onChange={(e) => setSubAnn({ ...subAnn, title: e.target.value })} required />
+                                    <textarea className="w-full p-3 border rounded outline-none h-28 text-sm" placeholder="Message details..." value={subAnn.content} onChange={(e) => setSubAnn({ ...subAnn, content: e.target.value })} required />
+                                    <button type="submit" className="w-full bg-blue-900 text-white px-8 py-3 rounded-lg font-bold hover:bg-blue-800 transition shadow-md">Broadcast Notice</button>
+                                </form>
+                            </div>
+
+                            {/* VIEW RECENT SUBJECT NOTICES */}
+                            <div className="bg-white p-6 rounded-xl shadow-md border-t-4 border-blue-500">
+                                <h2 className="text-xl font-bold text-blue-900 mb-4 flex items-center gap-2">
+                                    <Clock className="text-blue-500" /> Recent Subject Notices
+                                </h2>
+                                <div className="space-y-3 max-h-[250px] overflow-y-auto pr-2 no-scrollbar">
+                                    {subjectNotices.length > 0 ? subjectNotices.map((ann) => (
+                                        <div key={ann.id} className="p-4 border rounded-xl bg-gray-50 flex justify-between items-start group hover:bg-white transition-all shadow-sm relative overflow-hidden">
+                                            <div className="flex-grow">
+                                                <span className="text-[8px] font-black uppercase px-2 py-0.5 rounded-full mb-2 inline-block bg-blue-100 text-blue-700">
+                                                    {ann.type} Notice
+                                                </span>
+                                                <p className="font-bold text-blue-900 text-sm">{ann.title}</p>
+                                                <p className="text-xs text-gray-500 line-clamp-2 mt-1">{ann.content}</p>
+                                            </div>
+                                            <button 
+                                                onClick={() => handleDeleteNotice(ann.id)} 
+                                                className="p-2 text-gray-300 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                                                title="Delete Notice"
+                                            >
+                                                <Trash2 size={16} />
+                                            </button>
+                                        </div>
+                                    )) : (
+                                        <div className="text-center py-10 border-2 border-dashed border-gray-200 rounded-2xl bg-gray-50/50">
+                                            <Megaphone className="mx-auto text-gray-300 mb-2" size={32} />
+                                            <p className="text-gray-400 italic text-xs">No active notices for this subject.</p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
                         </div>
+
                     </div>
                 )}
             </div>

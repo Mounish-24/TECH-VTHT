@@ -16,7 +16,7 @@ export default function FacultyDashboard() {
     const [theoryCourses, setTheoryCourses] = useState<any[]>([]);
     const [labCourses, setLabCourses] = useState<any[]>([]);
     const [announcements, setAnnouncements] = useState<any[]>([]);
-    const [myAnnouncements, setMyAnnouncements] = useState<any[]>([]); // 🌟 NEW STATE: For the faculty's own posts
+    const [myAnnouncements, setMyAnnouncements] = useState<any[]>([]);
     const [newAnnouncement, setNewAnnouncement] = useState({ title: '', content: '', section: 'All' });
     const [message, setMessage] = useState('');
     const [latestReport, setLatestReport] = useState<any>(null);
@@ -41,7 +41,7 @@ export default function FacultyDashboard() {
                 const res = await axios.get(`${API_URL}/faculty/${userId}`);
                 const facultyData = res.data;
                 setFaculty(facultyData);
-                setProfilePic(facultyData.profile_pic || `https://ui-avatars.com/api/?name=${facultyData.name}&background=random`);
+                setProfilePic(facultyData.profile_pic || `https://ui-avatars.com/api/?name=${facultyData.name}&background=6b7280&color=fff&bold=true&size=200`);
 
                 // 2. Check Advisor Status
                 try {
@@ -65,7 +65,6 @@ export default function FacultyDashboard() {
                 setAnnouncements(annRes.data);
 
                 // 5. Fetch Faculty's OWN Announcements (Faculty -> Student notices)
-                // We will add this backend endpoint in the next step!
                 fetchMyAnnouncements(facultyData.name); 
 
                 // 6. Fetch latest progress report
@@ -83,10 +82,8 @@ export default function FacultyDashboard() {
         fetchData();
     }, [router]);
 
-    // 🌟 NEW FUNCTION: Fetch announcements posted by THIS specific faculty
     const fetchMyAnnouncements = async (facultyName: string) => {
         try {
-            // Temporary catch block so it doesn't crash until the backend is updated
             const res = await axios.get(`${API_URL}/announcements/faculty-posts?posted_by=${encodeURIComponent(facultyName)}`);
             setMyAnnouncements(res.data);
         } catch (err) {
@@ -111,7 +108,7 @@ export default function FacultyDashboard() {
                     alert("Profile photo updated!");
                 }
             } catch (err) {
-                if (faculty) setProfilePic(`https://ui-avatars.com/api/?name=${faculty.name}&background=random`);
+                if (faculty) setProfilePic(`https://ui-avatars.com/api/?name=${faculty.name}&background=6b7280&color=fff&bold=true&size=200`);
             }
         }
     };
@@ -123,23 +120,19 @@ export default function FacultyDashboard() {
                 title: newAnnouncement.title,
                 content: newAnnouncement.content,
                 section: newAnnouncement.section,
-                type: "Student", // Notices posted by faculty are intended for Students
+                type: "Student",
                 posted_by: faculty.name,
-                course_code: "Global" // Standardized as Global since it's a general section notice
+                course_code: "Global"
             });
             setMessage("Announcement broadcasted successfully!");
             setNewAnnouncement({ title: '', content: '', section: 'All' });
-            
-            // Instantly refresh the "My Recent Broadcasts" panel
             fetchMyAnnouncements(faculty.name); 
-            
             setTimeout(() => setMessage(''), 3000);
         } catch { 
             setMessage("Failed to broadcast announcement."); 
         }
     };
 
-    // 🌟 NEW FUNCTION: Delete a faculty's own announcement
     const handleDeleteAnnouncement = async (id: number) => {
         if (!confirm("Are you sure you want to delete this announcement?")) return;
         try {
@@ -155,48 +148,217 @@ export default function FacultyDashboard() {
     return (
         <div className="min-h-screen flex flex-col bg-gray-50">
             <Navbar />
-            <div className="container mx-auto px-4 py-8 flex-grow">
-                <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
-                    <div>
-                        <h1 className="text-3xl font-bold text-blue-900 tracking-tight">Faculty Dashboard</h1>
-                        <p className="text-sm text-gray-500">{faculty.designation}</p>
+            <div className="container mx-auto px-4 pt-0 pb-8 flex-grow">
+
+                {/* Centered Title */}
+                <div className="text-center mb-8 pt-8">
+                    <h1 className="text-3xl font-bold text-blue-900 tracking-tight">Faculty Dashboard</h1>
+                    <div className="flex gap-3 items-center justify-center mt-3">
+                        <span className="bg-gray-100 text-gray-700 px-3 py-2 rounded-full font-bold text-xs border border-gray-300 uppercase h-fit">
+                            {faculty.designation || 'Faculty'}
+                        </span>
+                        {isAdvisor && (
+                            <span className="bg-orange-100 text-orange-700 px-3 py-2 rounded-full font-bold text-xs border border-orange-200 uppercase h-fit">
+                                Advisor · Section {advisorSection}
+                            </span>
+                        )}
                     </div>
-                    {isAdvisor && (
-                        <button 
-                            onClick={() => router.push('/faculty/advisors')}
-                            className="bg-orange-500 text-white px-6 py-3 rounded-xl font-bold text-sm shadow-md hover:bg-orange-600 transition-all flex items-center gap-2"
-                        >
-                            <UserCheck size={18} /> Manage Section {advisorSection} Portal
-                        </button>
-                    )}
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                    <div className="space-y-6">
-                        {/* Profile Section */}
-                        <div className="bg-white p-6 rounded-2xl shadow-sm border-t-4 border-blue-900 text-center">
-                            <div className="relative group w-24 h-24 mb-4 mx-auto">
-                                <img src={profilePic || ""} alt="Profile" className="w-24 h-24 rounded-full object-cover border-4 border-gray-100 shadow-sm" />
-                                <label className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 rounded-full opacity-0 group-hover:opacity-100 transition cursor-pointer text-white">
-                                    <Camera size={20} /><input type="file" className="hidden" accept="image/*" onChange={handlePhotoUpload} />
-                                </label>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-start">
+
+                    {/* ===== ID CARD COLUMN ===== */}
+                    <div className="md:col-span-1 flex flex-col items-center gap-6">
+                        <div className="flex flex-col items-center" style={{ width: '360px' }}>
+
+                            {/* ── Lanyard ── */}
+                            <div className="flex flex-col items-center" style={{ marginBottom: '-1px' }}>
+                                {/* Striped grey fabric strap */}
+                                <div style={{
+                                    width: '36px',
+                                    height: '160px',
+                                    marginTop: '-160px',
+                                    background: 'repeating-linear-gradient(180deg,#374151 0px,#374151 4px,#6b7280 4px,#6b7280 8px)',
+                                    borderRadius: '0 0 2px 2px',
+                                    boxShadow: 'inset 2px 0 0 rgba(255,255,255,0.1), inset -2px 0 0 rgba(0,0,0,0.15)',
+                                    zIndex: 5,
+                                    position: 'relative',
+                                }}/>
+                                {/* Metal clasp — wide top */}
+                                <div style={{
+                                    width: '54px', height: '12px',
+                                    background: 'linear-gradient(180deg,#f3f4f6 0%,#b0b7c3 50%,#d1d5db 100%)',
+                                    borderRadius: '4px 4px 0 0',
+                                    boxShadow: '0 2px 6px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.6)',
+                                    position: 'relative', zIndex: 5,
+                                }}/>
+                                {/* Clasp narrow pin */}
+                                <div style={{
+                                    width: '20px', height: '11px',
+                                    background: 'linear-gradient(180deg,#9ca3af,#4b5563)',
+                                    borderRadius: '0 0 4px 4px',
+                                    boxShadow: '0 3px 5px rgba(0,0,0,0.3)',
+                                    position: 'relative', zIndex: 5,
+                                }}/>
                             </div>
-                            <h2 className="text-xl font-bold text-blue-900">{faculty.name}</h2>
-                            <p className="text-xs text-gray-400 font-mono mt-1">{faculty.staff_no}</p>
-                            <div className="space-y-2 text-sm border-t pt-4 font-medium mt-4">
-                                <p className="flex justify-between"><span className="text-gray-500 font-normal">Department:</span> <span>AI & DS</span></p>
-                                <p className="flex justify-between"><span className="text-gray-500 font-normal">Joined:</span> <span>{faculty.doj}</span></p>
+
+                            {/* ── THE CARD ── */}
+                            <div
+                                style={{
+                                    width: '100%',
+                                    background: '#ffffff',
+                                    borderRadius: '18px',
+                                    overflow: 'hidden',
+                                    boxShadow: '0 16px 56px rgba(55,65,81,0.18), 0 2px 10px rgba(0,0,0,0.07)',
+                                    border: '1px solid #dde3ed',
+                                    position: 'relative', zIndex: 4,
+                                }}
+                            >
+                                {/* ── Card Header — grey gradient ── */}
+                                <div style={{
+                                    background: 'linear-gradient(135deg,#374151 0%,#4b5563 100%)',
+                                    padding: '22px 22px 18px',
+                                    position: 'relative',
+                                    overflow: 'hidden',
+                                    textAlign: 'center',
+                                }}>
+                                    {/* Subtle diagonal texture */}
+                                    <div style={{
+                                        position: 'absolute', inset: 0, opacity: 0.04,
+                                        background: 'repeating-linear-gradient(-50deg,transparent,transparent 6px,#fff 6px,#fff 7px)'
+                                    }}/>
+                                    <div style={{ position: 'relative', zIndex: 1 }}>
+                                        <p style={{ color: '#fff', fontSize: '17px', fontWeight: 900, letterSpacing: '0.07em', lineHeight: 1.2 }}>
+                                            VEL TECH HIGH TECH
+                                        </p>
+                                        <p style={{ color: '#f97316', fontSize: '9px', fontWeight: 500, marginTop: '4px', letterSpacing: '0.02em' }}>
+                                            Dr. Rangarajan Dr. Sakunthala Engineering College
+                                        </p>
+                                        <div style={{ height: '1.5px', background: 'linear-gradient(90deg,transparent,rgba(249,115,22,0.9),transparent)', marginTop: '14px' }}/>
+                                        <p style={{ color: '#d1d5db', fontSize: '9px', letterSpacing: '0.3em', marginTop: '8px', fontWeight: 700 }}>
+                                            FACULTY IDENTITY CARD
+                                        </p>
+                                    </div>
+                                </div>
+
+                                {/* ── Body — photo left, details right ── */}
+                                <div style={{ background: '#f8fafc', padding: '32px 22px 30px', display: 'flex', gap: '20px', alignItems: 'flex-start' }}>
+
+                                    {/* Photo */}
+                                    <div style={{ flexShrink: 0, position: 'relative' }} className="group">
+                                        <div style={{
+                                            width: '100px', height: '152px',
+                                            borderRadius: '8px',
+                                            overflow: 'hidden',
+                                            border: '2.5px solid #cbd5e1',
+                                            boxShadow: '0 3px 10px rgba(0,0,0,0.12)'
+                                        }}>
+                                            <img src={profilePic || ''} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }}/>
+                                        </div>
+                                        <label style={{
+                                            position: 'absolute', inset: 0,
+                                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                            background: 'rgba(0,0,0,0.5)', borderRadius: '6px',
+                                            opacity: 0, cursor: 'pointer', color: 'white',
+                                            transition: 'opacity 0.2s'
+                                        }} className="group-hover:opacity-100">
+                                            <Camera size={18}/>
+                                            <input type="file" className="hidden" accept="image/*" onChange={handlePhotoUpload}/>
+                                        </label>
+                                    </div>
+
+                                    {/* Right details */}
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                        {/* Name */}
+                                        <p style={{ color: '#1f2937', fontSize: '18px', fontWeight: 900, letterSpacing: '0.04em', lineHeight: 1.2 }}>
+                                            {faculty.name?.toUpperCase()}
+                                        </p>
+                                        <div style={{
+                                            display: 'inline-block', marginTop: '6px',
+                                            background: '#374151', color: '#fff',
+                                            fontSize: '8px', fontWeight: 700, letterSpacing: '0.2em',
+                                            padding: '4px 12px', borderRadius: '3px'
+                                        }}>
+                                            {(faculty.designation || 'FACULTY').toUpperCase()}
+                                        </div>
+
+                                        {/* Info rows */}
+                                        <div style={{ marginTop: '14px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                            {[
+                                                { label: 'Staff No',  value: faculty.staff_no,             mono: true  },
+                                                { label: 'Dept',      value: 'AI & DS',                    mono: false },
+                                                { label: 'Joined',    value: String(faculty.doj || 'N/A'), mono: false },
+                                            ].map(({ label, value, mono }) => (
+                                                <div key={label} style={{
+                                                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                                                    background: '#eef2f8', borderRadius: '5px', padding: '7px 10px'
+                                                }}>
+                                                    <span style={{ fontSize: '9px', color: '#94a3b8', letterSpacing: '0.1em', fontWeight: 600, textTransform: 'uppercase' }}>{label}</span>
+                                                    <span style={{ fontSize: '12px', color: '#1f2937', fontWeight: 800, fontFamily: mono ? 'monospace' : 'inherit' }}>{value}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* ── Divider ── */}
+                                <div style={{ height: '1px', background: '#e8edf4', margin: '0 22px' }}/>
+
+                                {/* ── Advisor badge + Subjects count ── */}
+                                <div style={{ background: '#ffffff', padding: '20px 22px 28px' }}>
+                                    <div style={{ display: 'flex', gap: '12px', alignItems: 'stretch' }}>
+
+                                        {/* Theory count block */}
+                                        <div style={{ flex: 1 }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                                                <span style={{ fontSize: '8px', color: '#94a3b8', letterSpacing: '0.12em', fontWeight: 600, textTransform: 'uppercase' }}>Theory</span>
+                                                <span style={{ fontSize: '12px', fontWeight: 800, color: '#374151' }}>
+                                                    {theoryCourses.length} Subject{theoryCourses.length !== 1 ? 's' : ''}
+                                                </span>
+                                            </div>
+                                            <div style={{ height: '5px', background: '#e2e8f0', borderRadius: '999px', overflow: 'hidden' }}>
+                                                <div style={{
+                                                    height: '100%', borderRadius: '999px',
+                                                    width: `${Math.min(theoryCourses.length * 20, 100)}%`,
+                                                    background: 'linear-gradient(90deg,#374151,#6b7280)',
+                                                    transition: 'width 1s ease'
+                                                }}/>
+                                            </div>
+                                        </div>
+
+                                        {/* Vertical separator */}
+                                        <div style={{ width: '1px', background: '#e8edf4', flexShrink: 0 }}/>
+
+                                        {/* Advisor / Lab block */}
+                                        <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minWidth: '72px' }}>
+                                            <span style={{ fontSize: '8px', color: '#94a3b8', letterSpacing: '0.12em', fontWeight: 600, textTransform: 'uppercase' }}>
+                                                {isAdvisor ? 'Advisor' : 'Labs'}
+                                            </span>
+                                            <span style={{ fontSize: '14px', fontWeight: 900, color: isAdvisor ? '#f97316' : '#374151', lineHeight: 1.1, marginTop: '2px', textAlign: 'center' }}>
+                                                {isAdvisor ? `Sec ${advisorSection}` : `${labCourses.length}`}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* ── Footer — grey gradient ── */}
+                                <div style={{
+                                    background: 'linear-gradient(135deg,#374151,#4b5563)',
+                                    padding: '12px 0',
+                                }}/>
                             </div>
                         </div>
 
-                        {/* Admin Notice Section (Audience Filtered) */}
-                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-blue-50">
-                            <h3 className="text-sm font-bold text-blue-900 mb-4 flex items-center gap-2"><Bell size={14} className="text-blue-600" /> Administrative Notices</h3>
-                            <div className="space-y-3 max-h-64 overflow-y-auto pr-2 no-scrollbar">
+                        {/* Administrative Notices — below ID card */}
+                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 border-t-4 border-t-gray-400 w-full" style={{ width: '360px' }}>
+                            <h3 className="text-sm font-bold text-gray-700 mb-4 flex items-center gap-2">
+                                <Bell size={14} className="text-gray-500" /> Administrative Notices
+                            </h3>
+                            <div className="space-y-3 max-h-64 overflow-y-auto pr-1 no-scrollbar">
                                 {announcements.length > 0 ? announcements.map((ann: any) => (
                                     <div key={ann.id} className="p-3 bg-gray-50 rounded-lg border border-gray-100">
                                         <div className="flex justify-between items-start mb-1">
-                                            <p className="text-xs font-bold text-blue-900">{ann.title}</p>
+                                            <p className="text-xs font-bold text-gray-800">{ann.title}</p>
                                             <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded ${ann.type === 'Global' ? 'bg-green-100 text-green-700' : 'bg-purple-100 text-purple-700'}`}>
                                                 {ann.type}
                                             </span>
@@ -208,7 +370,29 @@ export default function FacultyDashboard() {
                         </div>
                     </div>
 
+                    {/* ===== MAIN CONTENT ===== */}
                     <div className="md:col-span-2 space-y-8">
+
+                        {/* Advisor Quick Access Banner */}
+                        {isAdvisor && (
+                            <div className="bg-white p-6 rounded-2xl shadow-md border-t-4 border-orange-500 flex flex-col sm:flex-row justify-between items-center gap-4 relative overflow-hidden">
+                                <div className="bg-orange-50 p-3 rounded-xl">
+                                    <UserCheck className="text-orange-500" size={24} />
+                                </div>
+                                <div className="text-center sm:text-left z-10">
+                                    <h2 className="text-xl font-bold text-blue-900 uppercase tracking-tight">Class Advisor Portal</h2>
+                                    <p className="text-xs text-gray-400 font-medium">Manage Section {advisorSection} — Attendance, Reports & More</p>
+                                </div>
+                                <button 
+                                    onClick={() => router.push('/faculty/advisors')}
+                                    className="bg-orange-500 text-white px-8 py-3 rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-orange-600 transition-all shadow-md flex items-center gap-2 z-10"
+                                >
+                                    Open Portal <ChevronRight size={18} />
+                                </button>
+                                <UserCheck size={100} className="absolute -right-8 -bottom-8 opacity-5 text-orange-400 pointer-events-none" />
+                            </div>
+                        )}
+
                         {/* Theory Courses Section */}
                         <div className="bg-white p-6 rounded-2xl shadow-sm border-l-4 border-blue-600">
                             <h2 className="text-xl font-bold text-blue-900 mb-4 flex items-center gap-2"><BookOpen className="text-blue-600" /> My Theory Subjects</h2>
